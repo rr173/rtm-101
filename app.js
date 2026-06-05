@@ -12,6 +12,51 @@ const TRACK_COLORS = [
 
 const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 
+const AUTOMATION_TYPES = {
+    volume: {
+        name: 'Volume',
+        color: '#4a9eff',
+        min: 0,
+        max: 127,
+        default: 127,
+        defaultValueLabel: (v) => `${Math.round(v / 127 * 100)}%`,
+        center: null
+    },
+    pan: {
+        name: 'Pan',
+        color: '#6bcb77',
+        min: 0,
+        max: 127,
+        default: 64,
+        defaultValueLabel: (v) => v < 64 ? `L${64 - v}` : v > 64 ? `R${v - 64}` : 'C',
+        center: 64
+    },
+    pitchBend: {
+        name: 'Pitch Bend',
+        color: '#ffd93d',
+        min: 0,
+        max: 127,
+        default: 64,
+        defaultValueLabel: (v) => `${(v - 64) * 2}ct`,
+        center: 64
+    },
+    modulation: {
+        name: 'Modulation',
+        color: '#e67e22',
+        min: 0,
+        max: 127,
+        default: 0,
+        defaultValueLabel: (v) => `${Math.round(v / 127 * 100)}%`,
+        center: null
+    }
+};
+
+const INTERPOLATION_MODES = {
+    linear: 'Linear',
+    step: 'Step',
+    sCurve: 'S-Curve'
+};
+
 function isBlackKey(pitch) {
     const note = pitch % 12;
     return [1, 3, 6, 8, 10].includes(note);
@@ -31,10 +76,55 @@ function generateId() {
     return Date.now().toString(36) + Math.random().toString(36).substr(2);
 }
 
+function interpolateLinear(t) {
+    return t;
+}
+
+function interpolateSCurve(t) {
+    return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+}
+
+function getAutomationValueAtTime(channel, tick) {
+    const points = channel.points;
+    if (points.length === 0) {
+        return AUTOMATION_TYPES[channel.type].default;
+    }
+    if (points.length === 1 || tick <= points[0].tick) {
+        return points[0].value;
+    }
+    if (tick >= points[points.length - 1].tick) {
+        return points[points.length - 1].value;
+    }
+    for (let i = 0; i < points.length - 1; i++) {
+        const p1 = points[i];
+        const p2 = points[i + 1];
+        if (tick >= p1.tick && tick <= p2.tick) {
+            const dt = p2.tick - p1.tick;
+            const t = dt === 0 ? 0 : (tick - p1.tick) / dt;
+            let interpolated;
+            switch (p1.interpolation) {
+                case 'step':
+                    interpolated = p1.value;
+                    break;
+                case 'sCurve':
+                    interpolated = p1.value + (p2.value - p1.value) * interpolateSCurve(t);
+                    break;
+                case 'linear':
+                default:
+                    interpolated = p1.value + (p2.value - p1.value) * interpolateLinear(t);
+                    break;
+            }
+            return interpolated;
+        }
+    }
+    return points[points.length - 1].value;
+}
+
 class PianoRollEditor {
     constructor() {
         this.tracks = [];
         this.activeTrackId = null;
+        this.activeChannelId = null;
         this.undoStack = [];
         this.redoStack = [];
         this.maxUndoSteps = 50;
@@ -58,6 +148,10 @@ class PianoRollEditor {
         this.dragState = null;
         this.selectionBox = null;
         this.contextMenuNote = null;
+        this.automationDragState = null;
+        this.contextMenuPoint = null;
+        
+        this.automationCollapsed = false;
         
         this.audioContext = null;
         this.activeOscillators = new Map();
@@ -73,6 +167,11 @@ class PianoRollEditor {
         this.keyboardContainer = document.getElementById('pianoKeyboard');
         this.gridContainer = document.getElementById('gridContainer');
         this.rulerContainer = document.getElementById('rulerContainer');
+        this.automationCanvas = document.getElementById('automationCanvas');
+        this.automationCtx = this.automationCanvas.getContext('2d');
+        this.automationCanvasContainer = document.getElementById('automationCanvasContainer');
+        this.automationContainer = document.getElementById('automationContainer');
+        this.channelSelect = document.getElementById('channelSelect');
         
         this.createInitialTracks();
         this.loadDemoMelody();
@@ -81,6 +180,7 @@ class PianoRollEditor {
         this.resizeCanvas();
         this.render();
         this.renderTrackList();
+        this.renderChannelSelect();
         
         setTimeout(() => {
             const targetPitch = 60;
@@ -108,7 +208,9 @@ class PianoRollEditor {
             volume: 80,
             muted: false,
             solo: false,
-            notes: []
+            notes: [],
+            automationChannels: [],
+            activeChannelId: null
         };
         this.tracks.push(track);
         return track;
@@ -124,9 +226,11 @@ class PianoRollEditor {
         this.tracks.splice(index, 1);
         if (this.activeTrackId === trackId) {
             this.activeTrackId = this.tracks[0].id;
+            this.activeChannelId = this.tracks[0].activeChannelId;
         }
         this.selectedNotes.clear();
         this.renderTrackList();
+        this.renderChannelSelect();
         this.render();
         
         this.executeCommand({
@@ -137,7 +241,9 @@ class PianoRollEditor {
             undo: () => {
                 this.tracks.splice(index, 0, trackCopy);
                 this.activeTrackId = trackId;
+                this.activeChannelId = trackCopy.activeChannelId;
                 this.renderTrackList();
+                this.renderChannelSelect();
                 this.render();
             },
             redo: () => {
@@ -146,10 +252,12 @@ class PianoRollEditor {
                     this.tracks.splice(idx, 1);
                     if (this.activeTrackId === trackId) {
                         this.activeTrackId = this.tracks[0].id;
+                        this.activeChannelId = this.tracks[0].activeChannelId;
                     }
                 }
                 this.selectedNotes.clear();
                 this.renderTrackList();
+                this.renderChannelSelect();
                 this.render();
             }
         });
@@ -256,9 +364,16 @@ class PianoRollEditor {
             this.scrollX = this.gridContainer.scrollLeft;
             this.scrollY = this.gridContainer.scrollTop;
             this.rulerContainer.scrollLeft = this.scrollX;
+            this.automationCanvasContainer.scrollLeft = this.scrollX;
             if (this.keyboardInner) {
                 this.keyboardInner.style.transform = `translateY(${-this.scrollY}px)`;
             }
+        });
+        
+        this.automationCanvasContainer.addEventListener('scroll', () => {
+            this.scrollX = this.automationCanvasContainer.scrollLeft;
+            this.gridContainer.scrollLeft = this.scrollX;
+            this.rulerContainer.scrollLeft = this.scrollX;
         });
         
         this.canvas.addEventListener('mousedown', (e) => this.onMouseDown(e));
@@ -268,10 +383,21 @@ class PianoRollEditor {
         this.canvas.addEventListener('contextmenu', (e) => this.onContextMenu(e));
         
         this.canvas.addEventListener('wheel', (e) => this.onWheel(e), { passive: false });
+        this.automationCanvas.addEventListener('wheel', (e) => this.onWheel(e), { passive: false });
+        
+        this.automationCanvas.addEventListener('mousedown', (e) => this.onAutomationMouseDown(e));
+        this.automationCanvas.addEventListener('mousemove', (e) => this.onAutomationMouseMove(e));
+        this.automationCanvas.addEventListener('mouseup', (e) => this.onAutomationMouseUp(e));
+        this.automationCanvas.addEventListener('mouseleave', () => this.onAutomationMouseUp());
+        this.automationCanvas.addEventListener('dblclick', (e) => this.onAutomationDoubleClick(e));
+        this.automationCanvas.addEventListener('contextmenu', (e) => this.onAutomationContextMenu(e));
         
         this.rulerCanvas.addEventListener('click', (e) => this.onRulerClick(e));
         
-        document.addEventListener('click', () => this.hideContextMenu());
+        document.addEventListener('click', () => {
+            this.hideContextMenu();
+            this.hideInterpolationMenu();
+        });
         document.addEventListener('keydown', (e) => this.onKeyDown(e));
         
         document.getElementById('playBtn').addEventListener('click', () => this.play());
@@ -289,13 +415,21 @@ class PianoRollEditor {
                 this.activeTrackId = track.id;
                 this.renderTrackList();
                 this.render();
+                this.renderChannelSelect();
             }
         });
         
-        document.querySelectorAll('.menu-item').forEach(item => {
+        document.querySelectorAll('#contextMenu .menu-item').forEach(item => {
             item.addEventListener('click', () => {
                 const action = item.dataset.action;
                 this.handleContextMenuAction(action);
+            });
+        });
+        
+        document.querySelectorAll('#interpolationMenu .menu-item').forEach(item => {
+            item.addEventListener('click', () => {
+                const mode = item.dataset.interpolation;
+                this.handleInterpolationChange(mode);
             });
         });
         
@@ -314,16 +448,53 @@ class PianoRollEditor {
         document.getElementById('velocityCancel').addEventListener('click', () => {
             this.hideVelocityDialog();
         });
+        
+        document.getElementById('toggleAutomationBtn').addEventListener('click', () => {
+            this.toggleAutomationPanel();
+        });
+        
+        document.getElementById('channelSelect').addEventListener('change', (e) => {
+            const track = this.getActiveTrack();
+            if (track) {
+                track.activeChannelId = e.target.value || null;
+                this.activeChannelId = track.activeChannelId;
+                this.renderAutomation();
+            }
+        });
+        
+        document.getElementById('addChannelBtn').addEventListener('click', () => {
+            this.showAddChannelDialog();
+        });
+        
+        document.getElementById('deleteChannelBtn').addEventListener('click', () => {
+            this.deleteActiveChannel();
+        });
+        
+        document.getElementById('addChannelOk').addEventListener('click', () => {
+            const type = document.getElementById('newChannelType').value;
+            this.addAutomationChannel(type);
+            this.hideAddChannelDialog();
+        });
+        
+        document.getElementById('addChannelCancel').addEventListener('click', () => {
+            this.hideAddChannelDialog();
+        });
     }
     
     resizeCanvas() {
         const containerRect = this.gridContainer.getBoundingClientRect();
+        const automationRect = this.automationCanvasContainer.getBoundingClientRect();
         
         let maxTick = 64;
         this.tracks.forEach(track => {
             track.notes.forEach(note => {
                 const end = note.startTick + note.durationTicks;
                 if (end > maxTick) maxTick = end;
+            });
+            track.automationChannels.forEach(channel => {
+                channel.points.forEach(point => {
+                    if (point.tick > maxTick) maxTick = point.tick;
+                });
             });
         });
         
@@ -334,8 +505,12 @@ class PianoRollEditor {
         this.rulerCanvas.width = this.canvas.width;
         this.rulerCanvas.height = 30;
         
+        this.automationCanvas.width = this.canvas.width;
+        this.automationCanvas.height = Math.max(automationRect.height, 120);
+        
         this.render();
         this.renderRuler();
+        this.renderAutomation();
     }
     
     render() {
@@ -433,6 +608,8 @@ class PianoRollEditor {
             ctx.lineTo(playX, height);
             ctx.stroke();
         }
+        
+        this.renderAutomation();
     }
     
     renderNote(note, color, isActive) {
@@ -555,8 +732,10 @@ class PianoRollEditor {
                     return;
                 }
                 this.activeTrackId = track.id;
+                this.activeChannelId = track.activeChannelId;
                 this.selectedNotes.clear();
                 this.renderTrackList();
+                this.renderChannelSelect();
                 this.render();
             });
             
@@ -1061,6 +1240,7 @@ class PianoRollEditor {
             this.resizeCanvas();
         } else {
             this.gridContainer.scrollLeft += e.deltaY;
+            this.automationCanvasContainer.scrollLeft += e.deltaY;
         }
     }
     
@@ -1106,6 +1286,570 @@ class PianoRollEditor {
         }
     }
     
+    getActiveTrack() {
+        return this.tracks.find(t => t.id === this.activeTrackId);
+    }
+    
+    getActiveChannel() {
+        const track = this.getActiveTrack();
+        if (!track) return null;
+        return track.automationChannels.find(c => c.id === track.activeChannelId);
+    }
+    
+    renderChannelSelect() {
+        const track = this.getActiveTrack();
+        const select = this.channelSelect;
+        if (!track) return;
+        
+        select.innerHTML = '';
+        
+        if (track.automationChannels.length === 0) {
+            const emptyOption = document.createElement('option');
+            emptyOption.value = '';
+            emptyOption.textContent = '(No channels)';
+            select.appendChild(emptyOption);
+            select.disabled = true;
+            this.activeChannelId = null;
+            track.activeChannelId = null;
+            return;
+        }
+        
+        select.disabled = false;
+        
+        track.automationChannels.forEach(channel => {
+            const option = document.createElement('option');
+            option.value = channel.id;
+            option.textContent = AUTOMATION_TYPES[channel.type].name;
+            if (channel.id === track.activeChannelId) {
+                option.selected = true;
+            }
+            select.appendChild(option);
+        });
+        
+        if (!track.activeChannelId || !track.automationChannels.find(c => c.id === track.activeChannelId)) {
+            track.activeChannelId = track.automationChannels[0].id;
+            select.value = track.activeChannelId;
+        }
+        this.activeChannelId = track.activeChannelId;
+    }
+    
+    toggleAutomationPanel() {
+        this.automationCollapsed = !this.automationCollapsed;
+        const container = this.automationContainer;
+        const btn = document.getElementById('toggleAutomationBtn');
+        if (this.automationCollapsed) {
+            container.classList.add('collapsed');
+            btn.classList.add('collapsed');
+        } else {
+            container.classList.remove('collapsed');
+            btn.classList.remove('collapsed');
+            setTimeout(() => this.resizeCanvas(), 50);
+        }
+    }
+    
+    showAddChannelDialog() {
+        document.getElementById('addChannelDialog').classList.add('show');
+    }
+    
+    hideAddChannelDialog() {
+        document.getElementById('addChannelDialog').classList.remove('show');
+    }
+    
+    addAutomationChannel(type) {
+        const track = this.getActiveTrack();
+        if (!track) return;
+        
+        const existing = track.automationChannels.find(c => c.type === type);
+        if (existing) {
+            track.activeChannelId = existing.id;
+            this.activeChannelId = existing.id;
+            this.renderChannelSelect();
+            this.renderAutomation();
+            return;
+        }
+        
+        const channel = {
+            id: generateId(),
+            type,
+            points: [
+                { tick: 0, value: AUTOMATION_TYPES[type].default, interpolation: 'linear' }
+            ]
+        };
+        
+        track.automationChannels.push(channel);
+        track.activeChannelId = channel.id;
+        this.activeChannelId = channel.id;
+        
+        this.executeCommand({
+            type: 'addAutomationChannel',
+            channel,
+            trackId: track.id,
+            undo: () => {
+                const t = this.tracks.find(tr => tr.id === track.id);
+                const idx = t.automationChannels.findIndex(c => c.id === channel.id);
+                if (idx !== -1) t.automationChannels.splice(idx, 1);
+                t.activeChannelId = t.automationChannels.length > 0 ? t.automationChannels[0].id : null;
+                this.activeChannelId = t.activeChannelId;
+                this.renderChannelSelect();
+                this.renderAutomation();
+                this.resizeCanvas();
+            },
+            redo: () => {
+                const t = this.tracks.find(tr => tr.id === track.id);
+                t.automationChannels.push(channel);
+                t.activeChannelId = channel.id;
+                this.activeChannelId = channel.id;
+                this.renderChannelSelect();
+                this.renderAutomation();
+                this.resizeCanvas();
+            }
+        });
+        
+        this.renderChannelSelect();
+        this.renderAutomation();
+        this.resizeCanvas();
+    }
+    
+    deleteActiveChannel() {
+        const track = this.getActiveTrack();
+        const channel = this.getActiveChannel();
+        if (!track || !channel) return;
+        
+        const channelIndex = track.automationChannels.findIndex(c => c.id === channel.id);
+        const channelCopy = JSON.parse(JSON.stringify(channel));
+        
+        this.executeCommand({
+            type: 'deleteAutomationChannel',
+            channel: channelCopy,
+            channelId: channel.id,
+            trackId: track.id,
+            channelIndex,
+            undo: () => {
+                const t = this.tracks.find(tr => tr.id === track.id);
+                t.automationChannels.splice(channelIndex, 0, channelCopy);
+                t.activeChannelId = channelCopy.id;
+                this.activeChannelId = channelCopy.id;
+                this.renderChannelSelect();
+                this.renderAutomation();
+                this.resizeCanvas();
+            },
+            redo: () => {
+                const t = this.tracks.find(tr => tr.id === track.id);
+                const idx = t.automationChannels.findIndex(c => c.id === channelCopy.id);
+                if (idx !== -1) t.automationChannels.splice(idx, 1);
+                t.activeChannelId = t.automationChannels.length > 0 ? t.automationChannels[0].id : null;
+                this.activeChannelId = t.activeChannelId;
+                this.renderChannelSelect();
+                this.renderAutomation();
+                this.resizeCanvas();
+            }
+        });
+        
+        track.automationChannels.splice(channelIndex, 1);
+        track.activeChannelId = track.automationChannels.length > 0 ? track.automationChannels[0].id : null;
+        this.activeChannelId = track.activeChannelId;
+        this.renderChannelSelect();
+        this.renderAutomation();
+        this.resizeCanvas();
+    }
+    
+    valueToY(value, type) {
+        const h = Math.max(20, this.automationCanvas.height || 100);
+        const cfg = AUTOMATION_TYPES[type];
+        const range = cfg.max - cfg.min;
+        return h - ((value - cfg.min) / range) * (h - 20) - 10;
+    }
+    
+    yToValue(y, type) {
+        const h = Math.max(20, this.automationCanvas.height || 100);
+        const cfg = AUTOMATION_TYPES[type];
+        const range = cfg.max - cfg.min;
+        const clampedY = Math.max(10, Math.min(h - 10, y));
+        return cfg.min + ((h - clampedY - 10) / (h - 20)) * range;
+    }
+    
+    renderAutomation() {
+        if (!this.automationCtx || !this.automationCanvas) return;
+        const ctx = this.automationCtx;
+        const width = this.automationCanvas.width;
+        const height = this.automationCanvas.height;
+        if (width === 0 || height === 0) return;
+        const track = this.getActiveTrack();
+        
+        ctx.fillStyle = '#222';
+        ctx.fillRect(0, 0, width, height);
+        
+        ctx.strokeStyle = '#2a2a2a';
+        ctx.lineWidth = 1;
+        for (let v = 0; v <= 127; v += 16) {
+            const y = this.valueToY(v, 'volume');
+            ctx.beginPath();
+            ctx.moveTo(0, y);
+            ctx.lineTo(width, y);
+            ctx.stroke();
+        }
+        
+        const totalTicks = Math.ceil(width / this.cellWidth);
+        for (let tick = 0; tick <= totalTicks; tick++) {
+            const x = tick * this.cellWidth;
+            const isBar = tick % TICKS_PER_BAR === 0;
+            const isBeat = tick % TICKS_PER_BEAT === 0;
+            
+            ctx.strokeStyle = isBar ? '#444' : isBeat ? '#3a3a3a' : '#2e2e2e';
+            ctx.lineWidth = isBar ? 2 : 1;
+            ctx.beginPath();
+            ctx.moveTo(x, 0);
+            ctx.lineTo(x, height);
+            ctx.stroke();
+        }
+        
+        if (!track) return;
+        
+        const activeChannel = this.getActiveChannel();
+        
+        track.automationChannels.forEach(channel => {
+            const isActive = channel === activeChannel;
+            this.drawAutomationCurve(channel, isActive);
+        });
+        
+        if (this.isPlaying || this.isPaused) {
+            const playX = this.playTick * this.cellWidth;
+            ctx.strokeStyle = '#ff4444';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(playX, 0);
+            ctx.lineTo(playX, height);
+            ctx.stroke();
+        }
+    }
+    
+    drawAutomationCurve(channel, isActive) {
+        const ctx = this.automationCtx;
+        const type = channel.type;
+        const color = AUTOMATION_TYPES[type].color;
+        const points = channel.points;
+        
+        if (points.length === 0) return;
+        
+        const alpha = isActive ? 1.0 : 0.3;
+        ctx.globalAlpha = alpha;
+        
+        ctx.strokeStyle = color;
+        ctx.fillStyle = color + '33';
+        ctx.lineWidth = isActive ? 2 : 1.5;
+        
+        if (points.length === 1) {
+            const x = points[0].tick * this.cellWidth;
+            const y = this.valueToY(points[0].value, type);
+            const h = this.automationCanvas.height;
+            
+            ctx.beginPath();
+            ctx.moveTo(0, y);
+            ctx.lineTo(this.automationCanvas.width, y);
+            ctx.stroke();
+        } else {
+            ctx.beginPath();
+            const firstY = this.valueToY(points[0].value, type);
+            ctx.moveTo(0, firstY);
+            
+            for (let i = 0; i < points.length; i++) {
+                const p1 = points[i];
+                const p2 = points[i + 1];
+                const x1 = p1.tick * this.cellWidth;
+                const y1 = this.valueToY(p1.value, type);
+                ctx.lineTo(x1, y1);
+                if (p2) {
+                    const x2 = p2.tick * this.cellWidth;
+                    const y2 = this.valueToY(p2.value, type);
+                    
+                    if (p1.interpolation === 'step') {
+                        ctx.lineTo(x2, y1);
+                        ctx.lineTo(x2, y2);
+                    } else if (p1.interpolation === 'sCurve') {
+                        const midX = (x1 + x2) / 2;
+                        ctx.bezierCurveTo(midX, y1, midX, y2, x2, y2);
+                    } else {
+                        ctx.lineTo(x2, y2);
+                    }
+                } else {
+                    ctx.lineTo(this.automationCanvas.width, y1);
+                }
+            }
+            ctx.stroke();
+        }
+        
+        if (isActive) {
+            points.forEach((point, idx) => {
+                const x = point.tick * this.cellWidth;
+                const y = this.valueToY(point.value, type);
+                ctx.fillStyle = color;
+                ctx.beginPath();
+                ctx.arc(x, y, 5, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.strokeStyle = '#fff';
+                ctx.lineWidth = 1.5;
+                ctx.stroke();
+                
+                if (idx < points.length - 1) {
+                    const modeLabel = point.interpolation === 'step' ? 'S' : point.interpolation === 'sCurve' ? '~' : '';
+                    if (modeLabel) {
+                        ctx.fillStyle = '#ccc';
+                        ctx.font = '9px sans-serif';
+                        ctx.fillText(modeLabel, x + 6, y - 6);
+                    }
+                }
+            });
+        }
+        
+        ctx.globalAlpha = 1;
+    }
+    
+    getAutomationMousePosition(e) {
+        const rect = this.automationCanvas.getBoundingClientRect();
+        return {
+            x: e.clientX - rect.left + this.automationCanvasContainer.scrollLeft,
+            y: e.clientY - rect.top
+        };
+    }
+    
+    findControlPointAt(x, y, channel) {
+        if (!channel) return null;
+        const threshold = 8;
+        for (let i = 0; i < channel.points.length; i++) {
+            const point = channel.points[i];
+            const px = point.tick * this.cellWidth;
+            const py = this.valueToY(point.value, channel.type);
+            const dist = Math.sqrt((x - px) ** 2 + (y - py) ** 2);
+            if (dist < threshold) {
+                return { point, index: i };
+            }
+        }
+        return null;
+    }
+    
+    onAutomationMouseDown(e) {
+        if (e.button !== 0) return;
+        
+        const pos = this.getAutomationMousePosition(e);
+        const channel = this.getActiveChannel();
+        if (!channel) return;
+        
+        const found = this.findControlPointAt(pos.x, pos.y, channel);
+        
+        if (found) {
+            this.automationDragState = {
+                type: 'movePoint',
+                point: found.point,
+                index: found.index,
+                startTick: found.point.tick,
+                startValue: found.point.value,
+                startX: pos.x,
+                startY: pos.y
+            };
+        } else {
+            const tick = Math.max(0, Math.round(pos.x / this.cellWidth));
+            const value = Math.round(this.yToValue(pos.y, channel.type));
+            const newPoint = {
+                tick, value, interpolation: 'linear'
+            };
+            
+            let insertIndex = 0;
+            for (let i = 0; i < channel.points.length; i++) {
+                if (channel.points[i].tick < tick) {
+                    insertIndex = i + 1;
+                }
+            }
+            
+            channel.points.splice(insertIndex, 0, newPoint);
+            
+            this.executeCommand({
+                type: 'addControlPoint',
+                channelId: channel.id,
+                trackId: this.activeTrackId,
+                point: newPoint,
+                insertIndex,
+                undo: () => {
+                    const t = this.tracks.find(tr => tr.id === this.activeTrackId);
+                    const ch = t.automationChannels.find(c => c.id === channel.id);
+                    const idx = ch.points.findIndex(p => p.tick === newPoint.tick && p.value === newPoint.value);
+                    if (idx !== -1) ch.points.splice(idx, 1);
+                    this.renderAutomation();
+                },
+                redo: () => {
+                    const t = this.tracks.find(tr => tr.id === this.activeTrackId);
+                    const ch = t.automationChannels.find(c => c.id === channel.id);
+                    let idx = 0;
+                    for (let i = 0; i < ch.points.length; i++) {
+                        if (ch.points[i].tick < tick) idx = i + 1;
+                    }
+                    ch.points.splice(idx, 0, newPoint);
+                    this.renderAutomation();
+                }
+            });
+            
+            this.automationDragState = {
+                type: 'movePoint',
+                point: newPoint,
+                index: insertIndex,
+                startTick: tick,
+                startValue: value,
+                startX: pos.x,
+                startY: pos.y,
+                isNew: true
+            };
+        }
+        
+        this.renderAutomation();
+    }
+    
+    onAutomationMouseMove(e) {
+        if (!this.automationDragState) return;
+        const pos = this.getAutomationMousePosition(e);
+        const channel = this.getActiveChannel();
+        if (!channel) return;
+        
+        this.automationDragState.point.tick = Math.max(0, Math.round(pos.x / this.cellWidth));
+        this.automationDragState.point.value = Math.max(0, Math.min(127, Math.round(this.yToValue(pos.y, channel.type))));
+        
+        channel.points.sort((a, b) => a.tick - b.tick);
+        
+        this.renderAutomation();
+    }
+    
+    onAutomationMouseUp(e) {
+        if (!this.automationDragState) return;
+        
+        const state = this.automationDragState;
+        const channel = this.getActiveChannel();
+        
+        if (state.type === 'movePoint' && !state.isNew && (state.startTick !== state.point.tick || state.startValue !== state.point.value)) {
+            const oldTick = state.startTick;
+            const oldValue = state.startValue;
+            const newTick = state.point.tick;
+            const newValue = state.point.value;
+            
+            this.executeCommand({
+                type: 'moveControlPoint',
+                channelId: channel.id,
+                trackId: this.activeTrackId,
+                pointId: state.point,
+                oldTick,
+                oldValue,
+                newTick,
+                newValue,
+                undo: () => {
+                    state.point.tick = oldTick;
+                    state.point.value = oldValue;
+                    channel.points.sort((a, b) => a.tick - b.tick);
+                    this.renderAutomation();
+                },
+                redo: () => {
+                    state.point.tick = newTick;
+                    state.point.value = newValue;
+                    channel.points.sort((a, b) => a.tick - b.tick);
+                    this.renderAutomation();
+                }
+            });
+        }
+        
+        this.automationDragState = null;
+        this.renderAutomation();
+        this.resizeCanvas();
+    }
+    
+    onAutomationDoubleClick(e) {
+        const pos = this.getAutomationMousePosition(e);
+        const channel = this.getActiveChannel();
+        if (!channel || channel.points.length <= 1) return;
+        
+        const found = this.findControlPointAt(pos.x, pos.y, channel);
+        if (!found) return;
+        
+        const { point, index } = found;
+        const pointCopy = { ...point };
+        
+        this.executeCommand({
+            type: 'deleteControlPoint',
+            channelId: channel.id,
+            trackId: this.activeTrackId,
+            point: pointCopy,
+            index,
+            undo: () => {
+                const t = this.tracks.find(tr => tr.id === this.activeTrackId);
+                const ch = t.automationChannels.find(c => c.id === channel.id);
+                ch.points.splice(index, 0, pointCopy);
+                ch.points.sort((a, b) => a.tick - b.tick);
+                this.renderAutomation();
+            },
+            redo: () => {
+                const t = this.tracks.find(tr => tr.id === this.activeTrackId);
+                const ch = t.automationChannels.find(c => c.id === channel.id);
+                const idx = ch.points.findIndex(p => p.tick === pointCopy.tick && p.value === pointCopy.value);
+                if (idx !== -1) ch.points.splice(idx, 1);
+                this.renderAutomation();
+            }
+        });
+        
+        channel.points.splice(index, 1);
+        this.renderAutomation();
+    }
+    
+    onAutomationContextMenu(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        
+        const pos = this.getAutomationMousePosition(e);
+        const channel = this.getActiveChannel();
+        if (!channel) return;
+        
+        const found = this.findControlPointAt(pos.x, pos.y, channel);
+        if (found && found.index < channel.points.length - 1) {
+            this.contextMenuPoint = found.point;
+            this.showInterpolationMenu(e.clientX, e.clientY);
+        }
+    }
+    
+    showInterpolationMenu(x, y) {
+        const menu = document.getElementById('interpolationMenu');
+        menu.style.left = `${x}px`;
+        menu.style.top = `${y}px`;
+        menu.style.display = 'block';
+    }
+    
+    hideInterpolationMenu() {
+        document.getElementById('interpolationMenu').style.display = 'none';
+    }
+    
+    handleInterpolationChange(mode) {
+        this.hideInterpolationMenu();
+        if (!this.contextMenuPoint) return;
+        
+        const channel = this.getActiveChannel();
+        const oldMode = this.contextMenuPoint.interpolation;
+        const point = this.contextMenuPoint;
+        
+        this.executeCommand({
+            type: 'changeInterpolation',
+            channelId: channel.id,
+            trackId: this.activeTrackId,
+            point,
+            oldMode,
+            newMode: mode,
+            undo: () => {
+                point.interpolation = oldMode;
+                this.renderAutomation();
+            },
+            redo: () => {
+                point.interpolation = mode;
+                this.renderAutomation();
+            }
+        });
+        
+        point.interpolation = mode;
+        this.renderAutomation();
+        this.contextMenuPoint = null;
+    }
+    
     executeCommand(command) {
         this.undoStack.push(command);
         if (this.undoStack.length > this.maxUndoSteps) {
@@ -1144,15 +1888,61 @@ class PianoRollEditor {
         }
     }
     
-    playNote(pitch, velocity, duration = null, trackId = null) {
+    getTrackAutomationValues(track, tick) {
+        const values = {
+            volume: AUTOMATION_TYPES.volume.default,
+            pan: AUTOMATION_TYPES.pan.default,
+            pitchBend: AUTOMATION_TYPES.pitchBend.default,
+            modulation: AUTOMATION_TYPES.modulation.default
+        };
+        track.automationChannels.forEach(channel => {
+            values[channel.type] = getAutomationValueAtTime(channel, tick);
+        });
+        return values;
+    }
+    
+    applyAutomationToOsc(oscData, values) {
+        const now = this.audioContext.currentTime;
+        
+        if (oscData.autoVolumeGain) {
+            const vol = values.volume / 127;
+            oscData.autoVolumeGain.gain.setTargetAtTime(vol, now, 0.02);
+        }
+        
+        if (oscData.panner) {
+            const pan = (values.pan - 64) / 64;
+            oscData.panner.pan.setTargetAtTime(Math.max(-1, Math.min(1, pan)), now, 0.02);
+        }
+        
+        if (oscData.pitchBendGain) {
+            const cents = (values.pitchBend - 64) * 2;
+            oscData.pitchBendGain.gain.setTargetAtTime(cents, now, 0.02);
+        }
+        
+        if (oscData.lfoGain) {
+            const depth = (values.modulation / 127) * 100;
+            oscData.lfoGain.gain.setTargetAtTime(depth, now, 0.02);
+        }
+    }
+    
+    playNote(pitch, velocity, duration = null, trackId = null, startTick = 0) {
         this.initAudio();
         
         const freq = pitchToFrequency(pitch);
         const now = this.audioContext.currentTime;
         
+        const track = trackId ? this.tracks.find(t => t.id === trackId) : null;
+        
         const gainNode = this.audioContext.createGain();
+        const autoVolumeGain = this.audioContext.createGain();
+        const panner = typeof this.audioContext.createStereoPanner === 'function'
+            ? this.audioContext.createStereoPanner()
+            : null;
         const osc1 = this.audioContext.createOscillator();
         const osc2 = this.audioContext.createOscillator();
+        const pitchBendGain = this.audioContext.createGain();
+        const lfo = this.audioContext.createOscillator();
+        const lfoGain = this.audioContext.createGain();
         
         osc1.type = 'sine';
         osc1.frequency.value = freq;
@@ -1160,13 +1950,21 @@ class PianoRollEditor {
         osc2.type = 'sine';
         osc2.frequency.value = freq * 3;
         
+        lfo.type = 'sine';
+        lfo.frequency.value = 5;
+        lfoGain.gain.value = 0;
+        pitchBendGain.gain.value = 0;
+        
+        pitchBendGain.connect(osc1.detune);
+        pitchBendGain.connect(osc2.detune);
+        lfo.connect(lfoGain);
+        lfoGain.connect(osc1.detune);
+        lfoGain.connect(osc2.detune);
+        
         const velocityGain = velocity / 127;
         let trackVolume = 1;
-        if (trackId) {
-            const track = this.tracks.find(t => t.id === trackId);
-            if (track) {
-                trackVolume = track.volume / 100;
-            }
+        if (track) {
+            trackVolume = track.volume / 100;
         }
         
         const attack = 0.01;
@@ -1174,11 +1972,11 @@ class PianoRollEditor {
         const sustain = 0.3;
         const release = 0.3;
         
-        const totalGain = velocityGain * trackVolume * 0.3;
+        const baseGain = velocityGain * trackVolume * 0.3;
         
         gainNode.gain.setValueAtTime(0, now);
-        gainNode.gain.linearRampToValueAtTime(totalGain, now + attack);
-        gainNode.gain.linearRampToValueAtTime(totalGain * sustain, now + attack + decay);
+        gainNode.gain.linearRampToValueAtTime(baseGain, now + attack);
+        gainNode.gain.linearRampToValueAtTime(baseGain * sustain, now + attack + decay);
         
         const osc1Gain = this.audioContext.createGain();
         osc1Gain.gain.value = 0.6;
@@ -1188,12 +1986,20 @@ class PianoRollEditor {
         
         osc1.connect(osc1Gain);
         osc2.connect(osc2Gain);
-        osc1Gain.connect(gainNode);
-        osc2Gain.connect(gainNode);
+        osc1Gain.connect(autoVolumeGain);
+        osc2Gain.connect(autoVolumeGain);
+        
+        if (panner) {
+            autoVolumeGain.connect(panner);
+            panner.connect(gainNode);
+        } else {
+            autoVolumeGain.connect(gainNode);
+        }
         gainNode.connect(this.audioContext.destination);
         
         osc1.start(now);
         osc2.start(now);
+        lfo.start(now);
         
         const key = document.querySelector(`.piano-key[data-pitch="${pitch}"]`);
         if (key) key.classList.add('active');
@@ -1201,8 +2007,21 @@ class PianoRollEditor {
         const stopTime = duration ? now + duration : null;
         const oscId = generateId();
         
+        const initValues = track ? this.getTrackAutomationValues(track, startTick) : {
+            volume: AUTOMATION_TYPES.volume.default,
+            pan: AUTOMATION_TYPES.pan.default,
+            pitchBend: AUTOMATION_TYPES.pitchBend.default,
+            modulation: AUTOMATION_TYPES.modulation.default
+        };
+        autoVolumeGain.gain.value = initValues.volume / 127;
+        if (panner) panner.pan.value = (initValues.pan - 64) / 64;
+        pitchBendGain.gain.value = (initValues.pitchBend - 64) * 2;
+        lfoGain.gain.value = (initValues.modulation / 127) * 100;
+        
         this.activeOscillators.set(oscId, {
-            osc1, osc2, gainNode, pitch, stopTime
+            osc1, osc2, gainNode, autoVolumeGain, panner,
+            pitchBendGain, lfo, lfoGain,
+            pitch, stopTime, trackId
         });
         
         return oscId;
@@ -1221,6 +2040,7 @@ class PianoRollEditor {
         
         oscData.osc1.stop(now + release);
         oscData.osc2.stop(now + release);
+        if (oscData.lfo) oscData.lfo.stop(now + release);
         
         const key = document.querySelector(`.piano-key[data-pitch="${oscData.pitch}"]`);
         if (key) key.classList.remove('active');
@@ -1260,7 +2080,7 @@ class PianoRollEditor {
                     
                     track.notes.forEach(note => {
                         if (note.startTick === tick) {
-                            const oscId = this.playNote(note.pitch, note.velocity, null, track.id);
+                            const oscId = this.playNote(note.pitch, note.velocity, null, track.id, tick);
                             activeNotes.set(note.id, oscId);
                         }
                         
@@ -1274,6 +2094,16 @@ class PianoRollEditor {
                     });
                 });
             }
+            
+            this.activeOscillators.forEach((oscData) => {
+                if (oscData.trackId) {
+                    const track = this.tracks.find(t => t.id === oscData.trackId);
+                    if (track) {
+                        const values = this.getTrackAutomationValues(track, newTick);
+                        this.applyAutomationToOsc(oscData, values);
+                    }
+                }
+            });
             
             this.playTick = newTick;
             
@@ -1327,6 +2157,11 @@ class PianoRollEditor {
             track.notes.forEach(note => {
                 const end = note.startTick + note.durationTicks;
                 if (end > max) max = end;
+            });
+            track.automationChannels.forEach(channel => {
+                channel.points.forEach(point => {
+                    if (point.tick > max) max = point.tick;
+                });
             });
         });
         return max + TICKS_PER_BAR;

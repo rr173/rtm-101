@@ -30,8 +30,26 @@
                 <div class="ruler-container" id="rulerContainer">
                     <canvas id="rulerCanvas"></canvas>
                 </div>
-                <div class="grid-container" id="gridContainer">
-                    <canvas id="gridCanvas"></canvas>
+                <div class="grid-area">
+                    <div class="grid-container" id="gridContainer">
+                        <canvas id="gridCanvas"></canvas>
+                    </div>
+                    <div class="automation-container" id="automationContainer">
+                        <div class="automation-spacer"></div>
+                        <div class="automation-panel">
+                            <div class="automation-toolbar">
+                                <button id="toggleAutomationBtn" class="automation-toggle-btn" title="Toggle Automation Panel"><span class="btn-arrow">▾</span> Automation</button>
+                                <div class="automation-controls">
+                                    <select id="channelSelect" class="channel-select"></select>
+                                    <button id="addChannelBtn" class="automation-btn">+ Add Channel</button>
+                                    <button id="deleteChannelBtn" class="automation-btn danger">× Delete</button>
+                                </div>
+                            </div>
+                            <div class="automation-canvas-container" id="automationCanvasContainer">
+                                <canvas id="automationCanvas"></canvas>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -50,6 +68,28 @@
         <div class="menu-item" data-action="copy">Copy</div>
         <div class="menu-item" data-action="paste">Paste</div>
         <div class="menu-item" data-action="delete">Delete</div>
+    </div>
+
+    <div id="interpolationMenu" class="context-menu">
+        <div class="menu-item" data-interpolation="linear">Linear</div>
+        <div class="menu-item" data-interpolation="step">Step</div>
+        <div class="menu-item" data-interpolation="sCurve">S-Curve</div>
+    </div>
+
+    <div id="addChannelDialog" class="dialog">
+        <div class="dialog-content">
+            <h3>Add Automation Channel</h3>
+            <select id="newChannelType" class="channel-type-select">
+                <option value="volume">Volume</option>
+                <option value="pan">Pan</option>
+                <option value="pitchBend">Pitch Bend</option>
+                <option value="modulation">Modulation</option>
+            </select>
+            <div class="dialog-buttons">
+                <button id="addChannelOk">OK</button>
+                <button id="addChannelCancel">Cancel</button>
+            </div>
+        </div>
     </div>
 
     <div id="velocityDialog" class="dialog">

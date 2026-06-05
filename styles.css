@@ -92,6 +92,14 @@ body {
     overflow: hidden;
 }
 
+.grid-area {
+    grid-area: grid;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    position: relative;
+}
+
 .top-spacer {
     grid-area: spacer;
     background-color: #2d2d2d;
@@ -165,13 +173,146 @@ body {
 }
 
 .grid-container {
-    grid-area: grid;
+    flex: 2;
     overflow: auto;
     background-color: #252525;
     position: relative;
 }
 
 #gridCanvas {
+    display: block;
+    cursor: crosshair;
+}
+
+.automation-container {
+    flex: 1;
+    display: flex;
+    flex-direction: row;
+    min-height: 0;
+    border-top: 1px solid #3d3d3d;
+    background-color: #252525;
+    overflow: hidden;
+}
+
+.automation-container.collapsed {
+    flex: 0 0 32px;
+}
+
+.automation-spacer {
+    width: 60px;
+    background-color: #2d2d2d;
+    border-right: 1px solid #3d3d3d;
+    flex-shrink: 0;
+}
+
+.automation-panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    overflow: hidden;
+}
+
+.automation-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 4px 8px;
+    background-color: #2d2d2d;
+    border-bottom: 1px solid #3d3d3d;
+    height: 32px;
+    flex-shrink: 0;
+}
+
+.automation-toggle-btn {
+    background: none;
+    border: none;
+    color: #e0e0e0;
+    cursor: pointer;
+    font-size: 12px;
+    padding: 4px 8px;
+    border-radius: 3px;
+    transition: background-color 0.2s;
+}
+
+.automation-toggle-btn:hover {
+    background-color: #3d3d3d;
+}
+
+.automation-toggle-btn.collapsed .btn-arrow {
+    transform: rotate(-90deg);
+    display: inline-block;
+}
+
+.automation-controls {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.channel-select {
+    background-color: #3d3d3d;
+    color: #e0e0e0;
+    border: 1px solid #4d4d4d;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    cursor: pointer;
+    max-width: 200px;
+}
+
+.channel-select:focus {
+    outline: none;
+    border-color: #4a9eff;
+}
+
+.channel-type-select {
+    width: 100%;
+    background-color: #3d3d3d;
+    color: #e0e0e0;
+    border: 1px solid #4d4d4d;
+    padding: 8px 12px;
+    border-radius: 4px;
+    font-size: 14px;
+    cursor: pointer;
+    margin: 12px 0;
+}
+
+.automation-btn {
+    background-color: #3d3d3d;
+    color: #e0e0e0;
+    border: 1px solid #4d4d4d;
+    padding: 4px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
+    transition: background-color 0.2s;
+}
+
+.automation-btn:hover {
+    background-color: #4d4d4d;
+}
+
+.automation-btn.danger {
+    color: #ff8888;
+}
+
+.automation-btn.danger:hover {
+    background-color: #4a3030;
+}
+
+.automation-canvas-container {
+    flex: 1;
+    overflow: hidden;
+    position: relative;
+    background-color: #222;
+}
+
+.automation-container.collapsed .automation-canvas-container {
+    display: none;
+}
+
+#automationCanvas {
     display: block;
     cursor: crosshair;
 }

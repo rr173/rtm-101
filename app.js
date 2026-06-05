@@ -119,19 +119,34 @@ class PianoRollEditor {
         if (index === -1 || this.tracks.length <= 1) return;
         
         const track = this.tracks[index];
+        const trackCopy = JSON.parse(JSON.stringify(track));
+        
+        this.tracks.splice(index, 1);
+        if (this.activeTrackId === trackId) {
+            this.activeTrackId = this.tracks[0].id;
+        }
+        this.selectedNotes.clear();
+        this.renderTrackList();
+        this.render();
+        
         this.executeCommand({
             type: 'removeTrack',
             trackIndex: index,
-            track: JSON.parse(JSON.stringify(track)),
+            track: trackCopy,
+            trackId,
             undo: () => {
-                this.tracks.splice(index, 0, track);
+                this.tracks.splice(index, 0, trackCopy);
+                this.activeTrackId = trackId;
                 this.renderTrackList();
                 this.render();
             },
             redo: () => {
-                this.tracks.splice(index, 1);
-                if (this.activeTrackId === trackId) {
-                    this.activeTrackId = this.tracks[0].id;
+                const idx = this.tracks.findIndex(t => t.id === trackId);
+                if (idx !== -1) {
+                    this.tracks.splice(idx, 1);
+                    if (this.activeTrackId === trackId) {
+                        this.activeTrackId = this.tracks[0].id;
+                    }
                 }
                 this.selectedNotes.clear();
                 this.renderTrackList();
@@ -144,32 +159,35 @@ class PianoRollEditor {
         const melodyTrack = this.tracks[0];
         const chordTrack = this.tracks[1];
         
-        const cMajorScale = [60, 62, 64, 65, 67, 69, 71, 72];
+        const melody = [
+            [60, 4], [62, 4], [64, 4], [65, 4],
+            [67, 4], [69, 4], [71, 4], [72, 4],
+            [71, 4], [69, 4], [67, 4], [65, 4],
+            [64, 4], [62, 4], [60, 4], [60, 4],
+            [62, 4], [64, 4], [65, 4], [67, 4],
+            [69, 4], [71, 4], [72, 4], [71, 4],
+            [69, 4], [67, 4], [65, 4], [64, 4],
+            [62, 4], [60, 8], [64, 4], [60, 4]
+        ];
+        
         let tick = 0;
-        for (const pitch of cMajorScale) {
+        for (const [pitch, duration] of melody) {
             melodyTrack.notes.push({
                 id: generateId(),
                 track: melodyTrack.id,
                 pitch,
                 startTick: tick,
-                durationTicks: 4,
+                durationTicks: duration,
                 velocity: 100
             });
-            tick += 4;
-        }
-        for (let i = cMajorScale.length - 2; i >= 0; i--) {
-            melodyTrack.notes.push({
-                id: generateId(),
-                track: melodyTrack.id,
-                pitch: cMajorScale[i],
-                startTick: tick,
-                durationTicks: 4,
-                velocity: 100
-            });
-            tick += 4;
+            tick += duration;
         }
         
         const chords = [
+            [60, 64, 67],
+            [65, 69, 72],
+            [67, 71, 74],
+            [60, 64, 67],
             [60, 64, 67],
             [65, 69, 72],
             [67, 71, 74],

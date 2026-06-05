@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MIDI Piano Roll Editor</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="app-container">
+        <div class="toolbar">
+            <div class="toolbar-left">
+                <button id="playBtn" class="toolbar-btn" title="Play (Space)">▶</button>
+                <button id="pauseBtn" class="toolbar-btn" title="Pause">⏸</button>
+                <button id="stopBtn" class="toolbar-btn" title="Stop">⏹</button>
+                <div class="bpm-control">
+                    <label for="bpmInput">BPM:</label>
+                    <input type="number" id="bpmInput" min="40" max="300" value="120">
+                </div>
+            </div>
+            <div class="toolbar-right">
+                <button id="exportMidiBtn" class="toolbar-btn">Export MIDI</button>
+            </div>
+        </div>
+
+        <div class="main-content">
+            <div class="piano-roll-container">
+                <div class="top-spacer"></div>
+                <div class="piano-keyboard" id="pianoKeyboard"></div>
+                <div class="ruler-container" id="rulerContainer">
+                    <canvas id="rulerCanvas"></canvas>
+                </div>
+                <div class="grid-container" id="gridContainer">
+                    <canvas id="gridCanvas"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <div class="track-panel">
+            <div class="track-header">
+                <span>Tracks</span>
+                <button id="addTrackBtn" class="track-btn">+</button>
+            </div>
+            <div id="trackList" class="track-list"></div>
+        </div>
+    </div>
+
+    <div id="contextMenu" class="context-menu">
+        <div class="menu-item" data-action="velocity">Set Velocity...</div>
+        <div class="menu-item" data-action="copy">Copy</div>
+        <div class="menu-item" data-action="paste">Paste</div>
+        <div class="menu-item" data-action="delete">Delete</div>
+    </div>
+
+    <div id="velocityDialog" class="dialog">
+        <div class="dialog-content">
+            <h3>Set Velocity</h3>
+            <input type="range" id="velocitySlider" min="1" max="127" value="100">
+            <span id="velocityValue">100</span>
+            <div class="dialog-buttons">
+                <button id="velocityOk">OK</button>
+                <button id="velocityCancel">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

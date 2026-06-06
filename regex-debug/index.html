@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Regex Debugger - 正则表达式调试器</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="app-container">
+        <div class="toolbar">
+            <div class="toolbar-left">
+                <span class="app-title">🔍 正则调试器</span>
+            </div>
+            <div class="toolbar-right">
+                <span class="hint-text">输入正则和测试文本，实时查看匹配结果与解析树</span>
+            </div>
+        </div>
+
+        <div class="main-content">
+            <div class="left-panel">
+                <div class="section">
+                    <div class="section-header">
+                        <span class="section-title">正则表达式</span>
+                        <div class="flags-container">
+                            <label class="flag-label">
+                                <input type="checkbox" id="flagG" checked>
+                                <span>g</span>
+                            </label>
+                            <label class="flag-label">
+                                <input type="checkbox" id="flagI">
+                                <span>i</span>
+                            </label>
+                            <label class="flag-label">
+                                <input type="checkbox" id="flagM">
+                                <span>m</span>
+                            </label>
+                            <label class="flag-label">
+                                <input type="checkbox" id="flagS">
+                                <span>s</span>
+                            </label>
+                        </div>
+                    </div>
+                    <input type="text" id="regexInput" class="regex-input" placeholder="输入正则表达式，例如：(\w+)@(\w+)\.(\w+)" value="">
+                    <div id="regexError" class="error-message"></div>
+                </div>
+
+                <div class="section">
+                    <div class="section-header">
+                        <span class="section-title">测试文本</span>
+                    </div>
+                    <textarea id="testInput" class="test-input" placeholder="输入测试文本..."></textarea>
+                </div>
+
+                <div class="section">
+                    <div class="section-header">
+                        <span class="section-title">匹配高亮</span>
+                    </div>
+                    <div id="highlightOutput" class="highlight-output"></div>
+                </div>
+            </div>
+
+            <div class="right-panel">
+                <div class="section">
+                    <div class="section-header">
+                        <span class="section-title">匹配结果</span>
+                        <span id="matchCount" class="match-count">0 个匹配</span>
+                    </div>
+                    <div id="matchesTable" class="matches-table-container">
+                        <table class="matches-table">
+                            <thead>
+                                <tr>
+                                    <th>#</th>
+                                    <th>位置</th>
+                                    <th>匹配内容</th>
+                                    <th>捕获组</th>
+                                </tr>
+                            </thead>
+                            <tbody id="matchesBody">
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="section ast-section">
+                    <div class="section-header">
+                        <span class="section-title">解析树 (AST)</span>
+                    </div>
+                    <div id="astError" class="error-message"></div>
+                    <pre id="astOutput" class="ast-output"></pre>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

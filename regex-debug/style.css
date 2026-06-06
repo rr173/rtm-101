@@ -1,0 +1,304 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background-color: #1e1e1e;
+    color: #e0e0e0;
+    height: 100vh;
+    overflow: hidden;
+}
+
+.app-container {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+}
+
+.toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 16px;
+    background-color: #2d2d2d;
+    border-bottom: 1px solid #3d3d3d;
+    height: 50px;
+}
+
+.toolbar-left, .toolbar-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.app-title {
+    font-size: 16px;
+    font-weight: 600;
+    color: #4a9eff;
+}
+
+.hint-text {
+    font-size: 12px;
+    color: #888;
+}
+
+.main-content {
+    flex: 1;
+    display: flex;
+    overflow: hidden;
+}
+
+.left-panel, .right-panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    padding: 12px;
+    gap: 12px;
+    min-width: 0;
+}
+
+.left-panel {
+    border-right: 1px solid #3d3d3d;
+}
+
+.section {
+    display: flex;
+    flex-direction: column;
+    background-color: #252525;
+    border: 1px solid #3d3d3d;
+    border-radius: 6px;
+    overflow: hidden;
+    min-height: 0;
+}
+
+.ast-section {
+    flex: 1;
+}
+
+.section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 12px;
+    background-color: #2d2d2d;
+    border-bottom: 1px solid #3d3d3d;
+}
+
+.section-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: #a0a0a0;
+}
+
+.flags-container {
+    display: flex;
+    gap: 8px;
+}
+
+.flag-label {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 13px;
+    color: #a0a0a0;
+    cursor: pointer;
+    user-select: none;
+}
+
+.flag-label input {
+    cursor: pointer;
+    accent-color: #4a9eff;
+}
+
+.flag-label:hover {
+    color: #e0e0e0;
+}
+
+.regex-input {
+    padding: 10px 12px;
+    font-family: 'SF Mono', 'Menlo', 'Monaco', 'Courier New', monospace;
+    font-size: 14px;
+    background-color: #1e1e1e;
+    border: none;
+    color: #e0e0e0;
+    outline: none;
+}
+
+.regex-input:focus {
+    background-color: #2a2a2a;
+}
+
+.test-input {
+    flex: 1;
+    min-height: 120px;
+    padding: 10px 12px;
+    font-family: 'SF Mono', 'Menlo', 'Monaco', 'Courier New', monospace;
+    font-size: 13px;
+    background-color: #1e1e1e;
+    border: none;
+    color: #e0e0e0;
+    outline: none;
+    resize: none;
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
+.test-input:focus {
+    background-color: #2a2a2a;
+}
+
+.highlight-output {
+    flex: 1;
+    min-height: 120px;
+    max-height: 200px;
+    padding: 10px 12px;
+    font-family: 'SF Mono', 'Menlo', 'Monaco', 'Courier New', monospace;
+    font-size: 13px;
+    background-color: #1e1e1e;
+    color: #e0e0e0;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-all;
+    line-height: 1.6;
+}
+
+.highlight-output:empty::before {
+    content: '输入正则和测试文本后，匹配内容将在此处高亮显示';
+    color: #555;
+}
+
+.error-message {
+    padding: 8px 12px;
+    font-size: 12px;
+    color: #ff6b6b;
+    background-color: #3a1e1e;
+    border-top: 1px solid #4d3030;
+    display: none;
+}
+
+.error-message.show {
+    display: block;
+}
+
+.match-count {
+    font-size: 12px;
+    color: #6bcb77;
+    font-weight: 500;
+}
+
+.matches-table-container {
+    flex: 1;
+    overflow: auto;
+    max-height: 300px;
+}
+
+.matches-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+}
+
+.matches-table th {
+    position: sticky;
+    top: 0;
+    background-color: #2d2d2d;
+    padding: 8px 10px;
+    text-align: left;
+    font-weight: 600;
+    color: #a0a0a0;
+    border-bottom: 1px solid #3d3d3d;
+    z-index: 1;
+}
+
+.matches-table td {
+    padding: 6px 10px;
+    border-bottom: 1px solid #333;
+    vertical-align: top;
+    font-family: 'SF Mono', 'Menlo', 'Monaco', 'Courier New', monospace;
+    word-break: break-all;
+}
+
+.matches-table tbody tr:hover {
+    background-color: #2a2a2a;
+}
+
+.matches-table .col-index {
+    width: 40px;
+    color: #888;
+}
+
+.matches-table .col-position {
+    width: 90px;
+    color: #6bcb77;
+}
+
+.capture-group {
+    display: inline-block;
+    padding: 1px 6px;
+    margin: 1px 2px;
+    border-radius: 3px;
+    font-size: 11px;
+    font-family: 'SF Mono', 'Menlo', 'Monaco', 'Courier New', monospace;
+}
+
+.ast-output {
+    flex: 1;
+    padding: 12px;
+    font-family: 'SF Mono', 'Menlo', 'Monaco', 'Courier New', monospace;
+    font-size: 12px;
+    background-color: #1e1e1e;
+    color: #e0e0e0;
+    overflow: auto;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
+.ast-output:empty::before {
+    content: '输入正则表达式后，解析树将在此处显示';
+    color: #555;
+}
+
+.ast-node {
+    display: block;
+}
+
+.ast-type {
+    color: #4a9eff;
+    font-weight: 600;
+}
+
+.ast-value {
+    color: #6bcb77;
+}
+
+.ast-literal {
+    color: #ffd93d;
+}
+
+.ast-meta {
+    color: #888;
+    font-size: 11px;
+}
+
+::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+
+::-webkit-scrollbar-track {
+    background: #1e1e1e;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #4d4d4d;
+    border-radius: 5px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #5d5d5d;
+}

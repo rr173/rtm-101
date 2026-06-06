@@ -7,6 +7,7 @@ COPY analyzer.html /usr/share/nginx/html/
 COPY styles.css /usr/share/nginx/html/
 COPY app.js /usr/share/nginx/html/
 COPY chord-trainer /usr/share/nginx/html/chord-trainer/
+COPY rhythm-game /usr/share/nginx/html/rhythm-game/
 
 EXPOSE 80
 

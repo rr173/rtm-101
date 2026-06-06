@@ -1031,13 +1031,14 @@ class PianoRollEditor {
         
         const pitch = this.pixelToPitch(pos.y);
         const startTick = this.snapTick(this.pixelToTick(pos.x));
+        const snapUnit = Math.max(1, this.getSnapUnit());
         
         if (pitch >= MIN_PITCH && pitch <= MAX_PITCH && startTick >= 0) {
             this.dragState = {
                 type: 'create',
                 pitch,
                 startTick,
-                durationTicks: Math.max(1, this.getSnapUnit())
+                durationTicks: snapUnit
             };
         } else {
             this.dragState = {
@@ -1056,8 +1057,12 @@ class PianoRollEditor {
         const pos = this.getMousePosition(e);
         
         if (this.dragState.type === 'create') {
+            const snapUnit = Math.max(1, this.getSnapUnit());
             const currentTick = this.snapTick(this.pixelToTick(pos.x));
-            this.dragState.durationTicks = Math.max(1, currentTick - this.dragState.startTick + 1);
+            let rawDuration = currentTick - this.dragState.startTick + snapUnit;
+            if (rawDuration < snapUnit) rawDuration = snapUnit;
+            const snappedDuration = Math.max(snapUnit, Math.round(rawDuration / snapUnit) * snapUnit);
+            this.dragState.durationTicks = snappedDuration;
             this.render();
         } else if (this.dragState.type === 'move') {
             const deltaTick = this.pixelToTick(pos.x) - this.pixelToTick(this.dragState.startX);
@@ -1070,8 +1075,12 @@ class PianoRollEditor {
             });
             this.render();
         } else if (this.dragState.type === 'resize') {
+            const snapUnit = Math.max(1, this.getSnapUnit());
             const endTick = this.snapTick(this.pixelToTick(pos.x));
-            this.dragState.note.durationTicks = Math.max(1, endTick - this.dragState.note.startTick + 1);
+            let rawDuration = endTick - this.dragState.note.startTick + snapUnit;
+            if (rawDuration < snapUnit) rawDuration = snapUnit;
+            const snappedDuration = Math.max(snapUnit, Math.round(rawDuration / snapUnit) * snapUnit);
+            this.dragState.note.durationTicks = snappedDuration;
             this.render();
         } else if (this.dragState.type === 'select') {
             this.selectionBox = {
@@ -1426,6 +1435,7 @@ class PianoRollEditor {
     splitSelectedNotes() {
         if (this.selectedNotes.size === 0) return;
         
+        const snapUnit = Math.max(1, this.getSnapUnit());
         let splitTick = this.playTick;
         splitTick = this.snapTick(splitTick);
         
@@ -1438,20 +1448,39 @@ class PianoRollEditor {
             const startTick = note.startTick;
             const endTick = note.startTick + note.durationTicks;
             
+            if (note.durationTicks < 2 * snapUnit) return;
             if (splitTick <= startTick || splitTick >= endTick) return;
+            
+            let leftDuration = splitTick - startTick;
+            let rightDuration = endTick - splitTick;
+            
+            if (this.snapEnabled) {
+                leftDuration = Math.round(leftDuration / snapUnit) * snapUnit;
+                rightDuration = Math.round(rightDuration / snapUnit) * snapUnit;
+                
+                if (leftDuration < snapUnit) {
+                    leftDuration = snapUnit;
+                    rightDuration = note.durationTicks - snapUnit;
+                } else if (rightDuration < snapUnit) {
+                    rightDuration = snapUnit;
+                    leftDuration = note.durationTicks - snapUnit;
+                }
+            }
+            
+            if (leftDuration < 1 || rightDuration < 1) return;
+            
+            const actualSplitTick = startTick + leftDuration;
+            if (actualSplitTick <= startTick || actualSplitTick >= endTick) return;
             
             const track = this.tracks.find(t => t.id === note.track);
             const idx = track.notes.findIndex(n => n.id === noteId);
             if (idx === -1) return;
             
-            const leftDuration = splitTick - startTick;
-            const rightDuration = endTick - splitTick;
-            
             const rightNote = {
                 id: generateId(),
                 track: note.track,
                 pitch: note.pitch,
-                startTick: splitTick,
+                startTick: actualSplitTick,
                 durationTicks: rightDuration,
                 velocity: note.velocity
             };

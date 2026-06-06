@@ -64,7 +64,6 @@ function runMatch() {
 
     if (!regexStr) {
         highlightOutput.innerHTML = escapeHtml(testStr);
-        renderAst(null);
         return;
     }
 
@@ -73,7 +72,6 @@ function runMatch() {
     } catch (e) {
         showError('regexError', '正则语法错误: ' + e.message);
         highlightOutput.innerHTML = escapeHtml(testStr);
-        renderAst(null);
         return;
     }
 
@@ -89,14 +87,6 @@ function runMatch() {
     renderHighlight(testStr, matches);
     renderMatchesTable(matches);
     matchCount.textContent = matches.length + ' 个匹配';
-
-    try {
-        const ast = parseRegex(regexStr);
-        renderAst(ast);
-    } catch (e) {
-        showError('astError', '解析错误: ' + e.message);
-        renderAst(null);
-    }
 }
 
 function renderHighlight(text, matches) {
@@ -110,27 +100,96 @@ function renderHighlight(text, matches) {
         return;
     }
 
+    const regexStr = document.getElementById('regexInput').value;
+    const flags = getFlags();
+    let dSupported = true;
+    let groupMatches = [];
+    try {
+        const dre = new RegExp(regexStr, (flags.includes('g') ? flags : flags + 'g') + 'd');
+        let dm;
+        while ((dm = dre.exec(text)) !== null) {
+            groupMatches.push(dm);
+            if (!flags.includes('g')) break;
+            if (dm.index === dre.lastIndex) dre.lastIndex++;
+        }
+    } catch (e) {
+        dSupported = false;
+    }
+
     const segments = [];
     let lastEnd = 0;
 
     matches.forEach((match, matchIdx) => {
-        if (match.index > lastEnd) {
+        const matchStart = match.index;
+        const matchEnd = match.index + match[0].length;
+        const matchColorIdx = matchIdx % GROUP_COLORS.length;
+
+        if (matchStart > lastEnd) {
             segments.push({
                 start: lastEnd,
-                end: match.index,
-                text: text.slice(lastEnd, match.index),
+                end: matchStart,
+                text: text.slice(lastEnd, matchStart),
                 type: 'normal'
             });
         }
-        segments.push({
-            start: match.index,
-            end: match.index + match[0].length,
-            text: match[0],
-            type: 'match',
-            matchIndex: matchIdx,
-            groups: match.slice(1)
-        });
-        lastEnd = match.index + match[0].length;
+
+        const groupSpans = [];
+        if (dSupported && groupMatches[matchIdx] && groupMatches[matchIdx].indices) {
+            const indices = groupMatches[matchIdx].indices;
+            for (let gi = 1; gi < indices.length; gi++) {
+                if (indices[gi]) {
+                    groupSpans.push({
+                        start: indices[gi][0],
+                        end: indices[gi][1],
+                        groupIndex: gi
+                    });
+                }
+            }
+        }
+
+        if (groupSpans.length === 0) {
+            segments.push({
+                start: matchStart,
+                end: matchEnd,
+                text: match[0],
+                type: 'match',
+                colorIdx: matchColorIdx
+            });
+        } else {
+            groupSpans.sort((a, b) => a.start - b.start);
+            let cursor = matchStart;
+            groupSpans.forEach(gs => {
+                if (gs.start > cursor) {
+                    segments.push({
+                        start: cursor,
+                        end: gs.start,
+                        text: text.slice(cursor, gs.start),
+                        type: 'match',
+                        colorIdx: matchColorIdx
+                    });
+                }
+                segments.push({
+                    start: gs.start,
+                    end: gs.end,
+                    text: text.slice(gs.start, gs.end),
+                    type: 'group',
+                    colorIdx: (gs.groupIndex - 1) % GROUP_COLORS.length,
+                    groupIndex: gs.groupIndex
+                });
+                cursor = gs.end;
+            });
+            if (cursor < matchEnd) {
+                segments.push({
+                    start: cursor,
+                    end: matchEnd,
+                    text: text.slice(cursor, matchEnd),
+                    type: 'match',
+                    colorIdx: matchColorIdx
+                });
+            }
+        }
+
+        lastEnd = matchEnd;
     });
 
     if (lastEnd < text.length) {
@@ -146,8 +205,14 @@ function renderHighlight(text, matches) {
     segments.forEach(seg => {
         if (seg.type === 'normal') {
             html += escapeHtml(seg.text);
-        } else {
-            html += '<mark style="background-color:' + GROUP_COLORS[0] + '; border-bottom: 2px solid ' + GROUP_TEXT_COLORS[0] + '; border-radius: 2px; padding: 1px 0;">' + escapeHtml(seg.text) + '</mark>';
+        } else if (seg.type === 'match') {
+            const c = GROUP_COLORS[seg.colorIdx];
+            const tc = GROUP_TEXT_COLORS[seg.colorIdx];
+            html += '<mark style="background-color:' + c + '; border-bottom: 2px solid ' + tc + '; border-radius: 2px; padding: 1px 0;">' + escapeHtml(seg.text) + '</mark>';
+        } else if (seg.type === 'group') {
+            const c = GROUP_COLORS[seg.colorIdx];
+            const tc = GROUP_TEXT_COLORS[seg.colorIdx];
+            html += '<span style="background-color:' + c + '; color:' + tc + '; border-radius: 2px; padding: 1px 0; border-bottom: 2px solid ' + tc + '; font-weight: 600;" title="捕获组 $' + seg.groupIndex + '">' + escapeHtml(seg.text) + '</span>';
         }
     });
 
@@ -571,6 +636,22 @@ function renderAst(ast) {
     output.innerHTML = astToHtml(ast, 0);
 }
 
+function refreshAst() {
+    showError('astError', '');
+    const regexStr = document.getElementById('regexInput').value;
+    if (!regexStr) {
+        renderAst(null);
+        return;
+    }
+    try {
+        const ast = parseRegex(regexStr);
+        renderAst(ast);
+    } catch (e) {
+        showError('astError', '解析错误: ' + e.message);
+        renderAst(null);
+    }
+}
+
 document.addEventListener('DOMContentLoaded', function () {
     const regexInput = document.getElementById('regexInput');
     const testInput = document.getElementById('testInput');
@@ -578,6 +659,7 @@ document.addEventListener('DOMContentLoaded', function () {
     const flagI = document.getElementById('flagI');
     const flagM = document.getElementById('flagM');
     const flagS = document.getElementById('flagS');
+    const refreshAstBtn = document.getElementById('refreshAstBtn');
 
     regexInput.value = '(\\w+)@(\\w+)\\.(\\w+)';
     testInput.value = 'Hello world!\nEmail: test@example.com\nAnother: user.name@company.org\nInvalid: not-an-email\nTest: hello123@test456.net';
@@ -598,6 +680,8 @@ document.addEventListener('DOMContentLoaded', function () {
     flagI.addEventListener('change', runMatch);
     flagM.addEventListener('change', runMatch);
     flagS.addEventListener('change', runMatch);
+    refreshAstBtn.addEventListener('click', refreshAst);
 
     runMatch();
+    refreshAst();
 });

@@ -45,6 +45,27 @@ body {
     color: #888;
 }
 
+.refresh-btn {
+    background-color: #3d3d3d;
+    color: #e0e0e0;
+    border: 1px solid #4d4d4d;
+    padding: 3px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
+    transition: background-color 0.2s;
+}
+
+.refresh-btn:hover {
+    background-color: #4a9eff;
+    border-color: #4a9eff;
+    color: #fff;
+}
+
+.refresh-btn:active {
+    background-color: #3a8eef;
+}
+
 .main-content {
     flex: 1;
     display: flex;

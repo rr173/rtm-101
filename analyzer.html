@@ -1,0 +1,908 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Real-Time Audio Spectrum Analyzer</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background-color: #1e1e1e;
+            color: #e0e0e0;
+            height: 100vh;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .toolbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 16px;
+            background-color: #2d2d2d;
+            border-bottom: 1px solid #3d3d3d;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+
+        .toolbar-left, .toolbar-right {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+
+        .toolbar-btn {
+            background-color: #3d3d3d;
+            color: #e0e0e0;
+            border: 1px solid #4d4d4d;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background-color 0.2s;
+        }
+
+        .toolbar-btn:hover {
+            background-color: #4d4d4d;
+        }
+
+        .toolbar-btn:active {
+            background-color: #5d5d5d;
+        }
+
+        .toolbar-btn.start-btn {
+            background-color: #4a9eff;
+            border-color: #4a9eff;
+            color: white;
+        }
+
+        .toolbar-btn.start-btn:hover {
+            background-color: #3a8eef;
+        }
+
+        .toolbar-btn.start-btn.active {
+            background-color: #ff6b6b;
+            border-color: #ff6b6b;
+        }
+
+        .control-group {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .control-group label {
+            font-size: 13px;
+            color: #a0a0a0;
+        }
+
+        .control-group select,
+        .control-group input[type="number"] {
+            background-color: #3d3d3d;
+            color: #e0e0e0;
+            border: 1px solid #4d4d4d;
+            padding: 6px 10px;
+            border-radius: 4px;
+            font-size: 13px;
+            cursor: pointer;
+        }
+
+        .control-group select:focus,
+        .control-group input[type="number"]:focus {
+            outline: none;
+            border-color: #4a9eff;
+        }
+
+        .slider-container {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .slider-container input[type="range"] {
+            width: 180px;
+            cursor: pointer;
+        }
+
+        .slider-value {
+            font-size: 12px;
+            color: #4a9eff;
+            min-width: 60px;
+            text-align: right;
+        }
+
+        .info-display {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            font-size: 13px;
+        }
+
+        .info-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 12px;
+            background-color: #3d3d3d;
+            border-radius: 4px;
+        }
+
+        .info-label {
+            color: #a0a0a0;
+        }
+
+        .info-value {
+            color: #4a9eff;
+            font-weight: 600;
+            font-family: 'SF Mono', Monaco, monospace;
+        }
+
+        .main-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            padding: 12px;
+            gap: 12px;
+        }
+
+        .canvas-wrapper {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            background-color: #252525;
+            border: 1px solid #3d3d3d;
+            border-radius: 6px;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .canvas-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 12px;
+            background-color: #2d2d2d;
+            border-bottom: 1px solid #3d3d3d;
+            font-size: 13px;
+            font-weight: 500;
+        }
+
+        .canvas-container {
+            flex: 1;
+            position: relative;
+            overflow: hidden;
+        }
+
+        #waterfallCanvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+            cursor: crosshair;
+        }
+
+        #barCanvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+            cursor: crosshair;
+        }
+
+        .tooltip {
+            position: fixed;
+            background-color: rgba(0, 0, 0, 0.9);
+            color: #fff;
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-family: 'SF Mono', Monaco, monospace;
+            pointer-events: none;
+            z-index: 1000;
+            border: 1px solid #4a9eff;
+            display: none;
+            white-space: nowrap;
+        }
+
+        .tooltip.visible {
+            display: block;
+        }
+
+        .tooltip .freq {
+            color: #4a9eff;
+        }
+
+        .tooltip .db {
+            color: #6bcb77;
+        }
+
+        .waterfall-wrapper {
+            flex: 1.2;
+        }
+
+        .bar-wrapper {
+            flex: 0.8;
+        }
+
+        .status-indicator {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background-color: #666;
+            margin-right: 6px;
+        }
+
+        .status-indicator.active {
+            background-color: #6bcb77;
+            box-shadow: 0 0 8px rgba(107, 203, 119, 0.6);
+            animation: pulse 1.5s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        ::-webkit-scrollbar {
+            width: 10px;
+            height: 10px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #252525;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #4d4d4d;
+            border-radius: 5px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #5d5d5d;
+        }
+
+        .error-message {
+            position: fixed;
+            top: 60px;
+            left: 50%;
+            transform: translateX(-50%);
+            background-color: #ff4444;
+            color: white;
+            padding: 10px 20px;
+            border-radius: 4px;
+            font-size: 13px;
+            z-index: 2000;
+            display: none;
+            max-width: 80%;
+        }
+
+        .error-message.visible {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <div class="toolbar">
+        <div class="toolbar-left">
+            <button id="startBtn" class="toolbar-btn start-btn">
+                <span id="statusIndicator" class="status-indicator"></span>
+                <span id="btnText">Start</span>
+            </button>
+
+            <div class="control-group">
+                <label for="fftSize">FFT Size:</label>
+                <select id="fftSize">
+                    <option value="512">512</option>
+                    <option value="1024">1024</option>
+                    <option value="2048" selected>2048</option>
+                    <option value="4096">4096</option>
+                </select>
+            </div>
+
+            <div class="control-group">
+                <label>Freq Range:</label>
+                <div class="slider-container">
+                    <span class="slider-value" id="minFreqLabel">0 Hz</span>
+                    <input type="range" id="minFreqSlider" min="0" max="4000" value="0" step="50">
+                </div>
+                <div class="slider-container">
+                    <input type="range" id="maxFreqSlider" min="0" max="4000" value="4000" step="50">
+                    <span class="slider-value" id="maxFreqLabel">4000 Hz</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="toolbar-right">
+            <div class="info-display">
+                <div class="info-item">
+                    <span class="info-label">Sample Rate:</span>
+                    <span class="info-value" id="sampleRate">-- Hz</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Freq Res:</span>
+                    <span class="info-value" id="freqRes">-- Hz</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Bins:</span>
+                    <span class="info-value" id="binCount">--</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="main-content">
+        <div class="canvas-wrapper waterfall-wrapper">
+            <div class="canvas-header">
+                <span>Spectrum Waterfall</span>
+                <span style="color: #a0a0a0; font-size: 12px;">
+                    Freq: <span id="wfMinDisp" style="color: #4a9eff;">0</span> - 
+                    <span id="wfMaxDisp" style="color: #4a9eff;">4000</span> Hz
+                    (top→bottom: new→old)
+                </span>
+            </div>
+            <div class="canvas-container">
+                <canvas id="waterfallCanvas"></canvas>
+            </div>
+        </div>
+
+        <div class="canvas-wrapper bar-wrapper">
+            <div class="canvas-header">
+                <span>Frequency Spectrum (Bar Chart)</span>
+                <span style="color: #a0a0a0; font-size: 12px;">
+                    Y: dB (relative to 0 dBFS)
+                </span>
+            </div>
+            <div class="canvas-container">
+                <canvas id="barCanvas"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <div id="tooltip" class="tooltip">
+        <div>Freq: <span class="freq" id="tooltipFreq">-- Hz</span></div>
+        <div>dB: <span class="db" id="tooltipDb">-- dB</span></div>
+    </div>
+
+    <div id="errorMessage" class="error-message"></div>
+
+    <script>
+        (function () {
+            'use strict';
+
+            const startBtn = document.getElementById('startBtn');
+            const btnText = document.getElementById('btnText');
+            const statusIndicator = document.getElementById('statusIndicator');
+            const fftSizeSelect = document.getElementById('fftSize');
+            const minFreqSlider = document.getElementById('minFreqSlider');
+            const maxFreqSlider = document.getElementById('maxFreqSlider');
+            const minFreqLabel = document.getElementById('minFreqLabel');
+            const maxFreqLabel = document.getElementById('maxFreqLabel');
+            const sampleRateDisplay = document.getElementById('sampleRate');
+            const freqResDisplay = document.getElementById('freqRes');
+            const binCountDisplay = document.getElementById('binCount');
+            const wfMinDisp = document.getElementById('wfMinDisp');
+            const wfMaxDisp = document.getElementById('wfMaxDisp');
+            const waterfallCanvas = document.getElementById('waterfallCanvas');
+            const barCanvas = document.getElementById('barCanvas');
+            const tooltip = document.getElementById('tooltip');
+            const tooltipFreq = document.getElementById('tooltipFreq');
+            const tooltipDb = document.getElementById('tooltipDb');
+            const errorMessage = document.getElementById('errorMessage');
+
+            const waterfallCtx = waterfallCanvas.getContext('2d');
+            const barCtx = barCanvas.getContext('2d');
+
+            let audioContext = null;
+            let analyser = null;
+            let sourceNode = null;
+            let stream = null;
+            let freqData = null;
+            let animationId = null;
+            let isRunning = false;
+            let waterfallImageData = null;
+            let waterfallWidth = 0;
+            let waterfallHeight = 0;
+
+            let minFreq = 0;
+            let maxFreq = 4000;
+            let fftSize = 2048;
+
+            function showError(msg) {
+                errorMessage.textContent = msg;
+                errorMessage.classList.add('visible');
+                setTimeout(() => {
+                    errorMessage.classList.remove('visible');
+                }, 4000);
+            }
+
+            function resizeCanvases() {
+                const wfContainer = waterfallCanvas.parentElement;
+                const barContainer = barCanvas.parentElement;
+
+                const wfRect = wfContainer.getBoundingClientRect();
+                const barRect = barContainer.getBoundingClientRect();
+
+                const dpr = window.devicePixelRatio || 1;
+
+                if (waterfallCanvas.width !== wfRect.width * dpr || waterfallCanvas.height !== wfRect.height * dpr) {
+                    waterfallCanvas.width = wfRect.width * dpr;
+                    waterfallCanvas.height = wfRect.height * dpr;
+                    waterfallCanvas.style.width = wfRect.width + 'px';
+                    waterfallCanvas.style.height = wfRect.height + 'px';
+                    waterfallCtx.scale(dpr, dpr);
+                    waterfallWidth = wfRect.width;
+                    waterfallHeight = wfRect.height;
+                    waterfallImageData = waterfallCtx.createImageData(waterfallWidth, waterfallHeight);
+                    waterfallCtx.fillStyle = '#000';
+                    waterfallCtx.fillRect(0, 0, waterfallWidth, waterfallHeight);
+                }
+
+                if (barCanvas.width !== barRect.width * dpr || barCanvas.height !== barRect.height * dpr) {
+                    barCanvas.width = barRect.width * dpr;
+                    barCanvas.height = barRect.height * dpr;
+                    barCanvas.style.width = barRect.width + 'px';
+                    barCanvas.style.height = barRect.height + 'px';
+                    barCtx.scale(dpr, dpr);
+                }
+            }
+
+            function valueToColor(normalized) {
+                let r = 0, g = 0, b = 0;
+                if (normalized < 0.25) {
+                    const t = normalized / 0.25;
+                    r = 0;
+                    g = 0;
+                    b = Math.floor(40 + t * 215);
+                } else if (normalized < 0.5) {
+                    const t = (normalized - 0.25) / 0.25;
+                    r = 0;
+                    g = Math.floor(t * 255);
+                    b = Math.floor(255 - t * 255);
+                } else if (normalized < 0.75) {
+                    const t = (normalized - 0.5) / 0.25;
+                    r = Math.floor(t * 255);
+                    g = 255;
+                    b = 0;
+                } else {
+                    const t = (normalized - 0.75) / 0.25;
+                    r = 255;
+                    g = Math.floor(255 - t * 200);
+                    b = Math.floor(t * 80);
+                }
+                return [r, g, b, 255];
+            }
+
+            function getBinRange(sampleRate) {
+                const nyquist = sampleRate / 2;
+                const totalBins = fftSize / 2;
+                const binWidth = sampleRate / fftSize;
+
+                let startBin = Math.floor(minFreq / binWidth);
+                let endBin = Math.ceil(maxFreq / binWidth);
+
+                startBin = Math.max(0, Math.min(startBin, totalBins - 1));
+                endBin = Math.max(startBin + 1, Math.min(endBin, totalBins));
+
+                return { startBin, endBin, binWidth, totalBins, nyquist };
+            }
+
+            function updateInfoDisplay() {
+                if (audioContext) {
+                    sampleRateDisplay.textContent = audioContext.sampleRate + ' Hz';
+                    const binWidth = audioContext.sampleRate / fftSize;
+                    freqResDisplay.textContent = binWidth.toFixed(1) + ' Hz';
+                    const { startBin, endBin } = getBinRange(audioContext.sampleRate);
+                    binCountDisplay.textContent = (endBin - startBin).toString();
+                } else {
+                    sampleRateDisplay.textContent = '-- Hz';
+                    freqResDisplay.textContent = '-- Hz';
+                    binCountDisplay.textContent = '--';
+                }
+            }
+
+            function drawWaterfall() {
+                if (!analyser || !audioContext) return;
+
+                analyser.getByteFrequencyData(freqData);
+
+                const { startBin, endBin } = getBinRange(audioContext.sampleRate);
+                const visibleBins = endBin - startBin;
+
+                const img = waterfallCtx.getImageData(0, 0, waterfallWidth, waterfallHeight);
+                const dstData = img.data;
+
+                for (let y = waterfallHeight - 1; y > 0; y--) {
+                    for (let x = 0; x < waterfallWidth; x++) {
+                        const srcIdx = ((y - 1) * waterfallWidth + x) * 4;
+                        const dstIdx = (y * waterfallWidth + x) * 4;
+                        dstData[dstIdx] = dstData[srcIdx];
+                        dstData[dstIdx + 1] = dstData[srcIdx + 1];
+                        dstData[dstIdx + 2] = dstData[srcIdx + 2];
+                        dstData[dstIdx + 3] = dstData[srcIdx + 3];
+                    }
+                }
+
+                for (let x = 0; x < waterfallWidth; x++) {
+                    const exactBin = startBin + (x / (waterfallWidth - 1)) * (visibleBins - 1);
+                    const binLow = Math.floor(exactBin);
+                    const binHigh = Math.min(binLow + 1, endBin - 1);
+                    const frac = exactBin - binLow;
+
+                    const valLow = freqData[binLow] / 255;
+                    const valHigh = freqData[binHigh] / 255;
+                    const value = valLow + (valHigh - valLow) * frac;
+
+                    const [r, g, b, a] = valueToColor(value);
+                    const idx = x * 4;
+                    dstData[idx] = r;
+                    dstData[idx + 1] = g;
+                    dstData[idx + 2] = b;
+                    dstData[idx + 3] = a;
+                }
+
+                waterfallCtx.putImageData(img, 0, 0);
+            }
+
+            function drawBars() {
+                if (!analyser || !audioContext) return;
+
+                const { startBin, endBin, binWidth } = getBinRange(audioContext.sampleRate);
+                const visibleBins = endBin - startBin;
+
+                analyser.getByteFrequencyData(freqData);
+
+                const w = barCanvas.clientWidth;
+                const h = barCanvas.clientHeight;
+
+                barCtx.fillStyle = '#1a1a1a';
+                barCtx.fillRect(0, 0, w, h);
+
+                const paddingLeft = 50;
+                const paddingRight = 10;
+                const paddingTop = 10;
+                const paddingBottom = 40;
+
+                const chartW = w - paddingLeft - paddingRight;
+                const chartH = h - paddingTop - paddingBottom;
+
+                barCtx.strokeStyle = '#3d3d3d';
+                barCtx.lineWidth = 1;
+
+                for (let i = 0; i <= 6; i++) {
+                    const y = paddingTop + (i / 6) * chartH;
+                    barCtx.beginPath();
+                    barCtx.moveTo(paddingLeft, y);
+                    barCtx.lineTo(paddingLeft + chartW, y);
+                    barCtx.stroke();
+                }
+
+                barCtx.fillStyle = '#888';
+                barCtx.font = '10px SF Mono, Monaco, monospace';
+                barCtx.textAlign = 'right';
+                barCtx.textBaseline = 'middle';
+                for (let i = 0; i <= 6; i++) {
+                    const db = -i * 16;
+                    const y = paddingTop + (i / 6) * chartH;
+                    barCtx.fillText(db + ' dB', paddingLeft - 5, y);
+                }
+
+                const freqLabels = 6;
+                barCtx.textAlign = 'center';
+                barCtx.textBaseline = 'top';
+                for (let i = 0; i <= freqLabels; i++) {
+                    const freq = minFreq + (i / freqLabels) * (maxFreq - minFreq);
+                    const x = paddingLeft + (i / freqLabels) * chartW;
+                    barCtx.beginPath();
+                    barCtx.moveTo(x, paddingTop + chartH);
+                    barCtx.lineTo(x, paddingTop + chartH + 5);
+                    barCtx.strokeStyle = '#3d3d3d';
+                    barCtx.stroke();
+                    barCtx.fillStyle = '#888';
+                    barCtx.fillText(freq.toFixed(0) + ' Hz', x, paddingTop + chartH + 8);
+                }
+
+                const barWidth = Math.max(1, (chartW / visibleBins) - 1);
+
+                for (let i = 0; i < visibleBins; i++) {
+                    const binIndex = startBin + i;
+                    const value = freqData[binIndex] / 255;
+                    const dbNorm = Math.max(0, (value - 0) / 1);
+                    const barHeight = dbNorm * chartH;
+
+                    const x = paddingLeft + (i / visibleBins) * chartW;
+                    const y = paddingTop + chartH - barHeight;
+
+                    const [r, g, b] = valueToColor(value);
+                    barCtx.fillStyle = `rgb(${r},${g},${b})`;
+                    barCtx.fillRect(x, y, barWidth, barHeight);
+                }
+
+                barCtx.strokeStyle = '#5d5d5d';
+                barCtx.lineWidth = 1;
+                barCtx.strokeRect(paddingLeft, paddingTop, chartW, chartH);
+            }
+
+            function animate() {
+                if (!isRunning) return;
+                drawWaterfall();
+                drawBars();
+                animationId = requestAnimationFrame(animate);
+            }
+
+            async function startAudio() {
+                try {
+                    stream = await navigator.mediaDevices.getUserMedia({
+                        audio: {
+                            echoCancellation: false,
+                            noiseSuppression: false,
+                            autoGainControl: false
+                        }
+                    });
+
+                    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                    if (audioContext.state === 'suspended') {
+                        await audioContext.resume();
+                    }
+
+                    sourceNode = audioContext.createMediaStreamSource(stream);
+                    analyser = audioContext.createAnalyser();
+                    analyser.fftSize = fftSize;
+                    analyser.smoothingTimeConstant = 0.65;
+
+                    sourceNode.connect(analyser);
+
+                    freqData = new Uint8Array(analyser.frequencyBinCount);
+
+                    updateInfoDisplay();
+
+                    isRunning = true;
+                    btnText.textContent = 'Stop';
+                    startBtn.classList.add('active');
+                    statusIndicator.classList.add('active');
+
+                    animate();
+                } catch (err) {
+                    console.error('Error starting audio:', err);
+                    showError('Failed to access microphone: ' + err.message);
+                }
+            }
+
+            function stopAudio() {
+                isRunning = false;
+
+                if (animationId) {
+                    cancelAnimationFrame(animationId);
+                    animationId = null;
+                }
+
+                if (stream) {
+                    stream.getTracks().forEach(track => track.stop());
+                    stream = null;
+                }
+
+                if (sourceNode) {
+                    try { sourceNode.disconnect(); } catch (e) {}
+                    sourceNode = null;
+                }
+
+                if (analyser) {
+                    try { analyser.disconnect(); } catch (e) {}
+                    analyser = null;
+                }
+
+                if (audioContext) {
+                    audioContext.close().then(() => {
+                        audioContext = null;
+                    });
+                    audioContext = null;
+                }
+
+                freqData = null;
+
+                btnText.textContent = 'Start';
+                startBtn.classList.remove('active');
+                statusIndicator.classList.remove('active');
+
+                updateInfoDisplay();
+            }
+
+            function updateFFTSize() {
+                fftSize = parseInt(fftSizeSelect.value, 10);
+
+                if (analyser) {
+                    analyser.fftSize = fftSize;
+                    freqData = new Uint8Array(analyser.frequencyBinCount);
+                }
+
+                updateInfoDisplay();
+            }
+
+            function updateFreqRange() {
+                let newMin = parseInt(minFreqSlider.value, 10);
+                let newMax = parseInt(maxFreqSlider.value, 10);
+
+                if (newMin >= newMax) {
+                    if (newMin >= 4000) {
+                        newMin = newMax - 50;
+                    } else {
+                        newMax = newMin + 50;
+                    }
+                }
+
+                minFreq = newMin;
+                maxFreq = newMax;
+
+                minFreqSlider.value = minFreq;
+                maxFreqSlider.value = maxFreq;
+
+                minFreqLabel.textContent = minFreq + ' Hz';
+                maxFreqLabel.textContent = maxFreq + ' Hz';
+                wfMinDisp.textContent = minFreq;
+                wfMaxDisp.textContent = maxFreq;
+
+                updateInfoDisplay();
+            }
+
+            function getFreqAndDbFromWaterfall(clientX, clientY) {
+                if (!analyser || !audioContext) return null;
+
+                const rect = waterfallCanvas.getBoundingClientRect();
+                const x = clientX - rect.left;
+                const y = clientY - rect.top;
+
+                if (x < 0 || x >= rect.width || y < 0 || y >= rect.height) return null;
+
+                const freq = minFreq + (x / rect.width) * (maxFreq - minFreq);
+
+                const { startBin, endBin, binWidth, nyquist } = getBinRange(audioContext.sampleRate);
+                const visibleBins = endBin - startBin;
+
+                const exactBin = startBin + (x / rect.width) * (visibleBins - 1);
+                const binIdx = Math.round(exactBin);
+
+                if (!freqData || binIdx < 0 || binIdx >= freqData.length) {
+                    return { freq: freq, db: null };
+                }
+
+                const value = freqData[binIdx] / 255;
+                const db = value * 96 - 96;
+
+                return { freq: freq, db: db };
+            }
+
+            function getFreqAndDbFromBar(clientX, clientY) {
+                if (!analyser || !audioContext) return null;
+
+                const rect = barCanvas.getBoundingClientRect();
+                const x = clientX - rect.left;
+                const y = clientY - rect.top;
+
+                if (x < 0 || x >= rect.width || y < 0 || y >= rect.height) return null;
+
+                const w = rect.width;
+                const h = rect.height;
+
+                const paddingLeft = 50;
+                const paddingRight = 10;
+                const paddingTop = 10;
+                const paddingBottom = 40;
+
+                const chartW = w - paddingLeft - paddingRight;
+                const chartH = h - paddingTop - paddingBottom;
+
+                if (x < paddingLeft || x > w - paddingRight || y < paddingTop || y > h - paddingBottom) {
+                    return null;
+                }
+
+                const chartX = x - paddingLeft;
+                const freq = minFreq + (chartX / chartW) * (maxFreq - minFreq);
+
+                const { startBin, endBin } = getBinRange(audioContext.sampleRate);
+                const visibleBins = endBin - startBin;
+
+                const exactBin = startBin + (chartX / chartW) * (visibleBins - 1);
+                const binIdx = Math.round(exactBin);
+
+                if (!freqData || binIdx < 0 || binIdx >= freqData.length) {
+                    return { freq: freq, db: null };
+                }
+
+                const value = freqData[binIdx] / 255;
+                const db = value * 96 - 96;
+
+                return { freq: freq, db: db };
+            }
+
+            function showTooltip(clientX, clientY, freq, db) {
+                tooltip.classList.add('visible');
+                tooltipFreq.textContent = freq.toFixed(1) + ' Hz';
+                tooltipDb.textContent = db !== null ? db.toFixed(1) + ' dB' : '-- dB';
+
+                const offsetX = 15;
+                const offsetY = 15;
+
+                let left = clientX + offsetX;
+                let top = clientY + offsetY;
+
+                const ttRect = tooltip.getBoundingClientRect();
+                if (left + ttRect.width > window.innerWidth) {
+                    left = clientX - ttRect.width - offsetX;
+                }
+                if (top + ttRect.height > window.innerHeight) {
+                    top = clientY - ttRect.height - offsetY;
+                }
+
+                tooltip.style.left = left + 'px';
+                tooltip.style.top = top + 'px';
+            }
+
+            function hideTooltip() {
+                tooltip.classList.remove('visible');
+            }
+
+            startBtn.addEventListener('click', () => {
+                if (isRunning) {
+                    stopAudio();
+                } else {
+                    startAudio();
+                }
+            });
+
+            fftSizeSelect.addEventListener('change', updateFFTSize);
+
+            minFreqSlider.addEventListener('input', updateFreqRange);
+            maxFreqSlider.addEventListener('input', updateFreqRange);
+
+            waterfallCanvas.addEventListener('mousemove', (e) => {
+                const info = getFreqAndDbFromWaterfall(e.clientX, e.clientY);
+                if (info) {
+                    showTooltip(e.clientX, e.clientY, info.freq, info.db);
+                } else {
+                    hideTooltip();
+                }
+            });
+
+            waterfallCanvas.addEventListener('mouseleave', hideTooltip);
+            waterfallCanvas.addEventListener('click', (e) => {
+                const info = getFreqAndDbFromWaterfall(e.clientX, e.clientY);
+                if (info) {
+                    showTooltip(e.clientX, e.clientY, info.freq, info.db);
+                }
+            });
+
+            barCanvas.addEventListener('mousemove', (e) => {
+                const info = getFreqAndDbFromBar(e.clientX, e.clientY);
+                if (info) {
+                    showTooltip(e.clientX, e.clientY, info.freq, info.db);
+                } else {
+                    hideTooltip();
+                }
+            });
+
+            barCanvas.addEventListener('mouseleave', hideTooltip);
+            barCanvas.addEventListener('click', (e) => {
+                const info = getFreqAndDbFromBar(e.clientX, e.clientY);
+                if (info) {
+                    showTooltip(e.clientX, e.clientY, info.freq, info.db);
+                }
+            });
+
+            window.addEventListener('resize', () => {
+                resizeCanvases();
+            });
+
+            resizeCanvases();
+            updateFreqRange();
+            updateFFTSize();
+        })();
+    </script>
+</body>
+</html>

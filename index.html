@@ -35,6 +35,7 @@
                 </div>
             </div>
             <div class="toolbar-right">
+                <button id="importMidiBtn" class="toolbar-btn">Import MIDI</button>
                 <button id="exportMidiBtn" class="toolbar-btn">Export MIDI</button>
             </div>
         </div>
@@ -47,23 +48,33 @@
                     <canvas id="rulerCanvas"></canvas>
                 </div>
                 <div class="grid-area">
-                    <div class="grid-container" id="gridContainer">
-                        <canvas id="gridCanvas"></canvas>
-                    </div>
-                    <div class="automation-container" id="automationContainer">
-                        <div class="automation-spacer"></div>
-                        <div class="automation-panel">
-                            <div class="automation-toolbar">
-                                <button id="toggleAutomationBtn" class="automation-toggle-btn" title="Toggle Automation Panel"><span class="btn-arrow">▾</span> Automation</button>
-                                <div class="automation-controls">
-                                    <select id="channelSelect" class="channel-select"></select>
-                                    <button id="addChannelBtn" class="automation-btn">+ Add Channel</button>
-                                    <button id="deleteChannelBtn" class="automation-btn danger">× Delete</button>
+                    <div class="grid-main-area">
+                        <div class="grid-container" id="gridContainer">
+                            <canvas id="gridCanvas"></canvas>
+                        </div>
+                        <div class="automation-container" id="automationContainer">
+                            <div class="automation-spacer"></div>
+                            <div class="automation-panel">
+                                <div class="automation-toolbar">
+                                    <button id="toggleAutomationBtn" class="automation-toggle-btn" title="Toggle Automation Panel"><span class="btn-arrow">▾</span> Automation</button>
+                                    <div class="automation-controls">
+                                        <select id="channelSelect" class="channel-select"></select>
+                                        <button id="addChannelBtn" class="automation-btn">+ Add Channel</button>
+                                        <button id="deleteChannelBtn" class="automation-btn danger">× Delete</button>
+                                    </div>
+                                </div>
+                                <div class="automation-canvas-container" id="automationCanvasContainer">
+                                    <canvas id="automationCanvas"></canvas>
                                 </div>
                             </div>
-                            <div class="automation-canvas-container" id="automationCanvasContainer">
-                                <canvas id="automationCanvas"></canvas>
-                            </div>
+                        </div>
+                    </div>
+                    <div class="velocity-panel" id="velocityPanel">
+                        <div class="velocity-toolbar">
+                            <button id="toggleVelocityBtn" class="automation-toggle-btn" title="Toggle Velocity Panel"><span class="btn-arrow">◂</span> Velocity</button>
+                        </div>
+                        <div class="velocity-canvas-container" id="velocityCanvasContainer">
+                            <canvas id="velocityCanvas"></canvas>
                         </div>
                     </div>
                 </div>
@@ -119,6 +130,19 @@
             </div>
         </div>
     </div>
+
+    <div id="importMidiDialog" class="dialog">
+        <div class="dialog-content">
+            <h3>Import MIDI File</h3>
+            <p id="importMidiMessage">This will replace all current tracks and notes. Continue?</p>
+            <div class="dialog-buttons">
+                <button id="importMidiOk">Import</button>
+                <button id="importMidiCancel">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <input type="file" id="midiFileInput" accept=".mid,.midi" style="display:none">
 
     <script src="app.js"></script>
 </body>

@@ -177,6 +177,12 @@ class PianoRollEditor {
         this.metronomeEnabled = false;
         this.lastMetronomeTick = -1;
         
+        this.velocityCollapsed = false;
+        this.velocityDragState = null;
+        this.velocitySelectionBox = null;
+        
+        this.pendingMidiFile = null;
+        
         this.init();
     }
     
@@ -194,6 +200,11 @@ class PianoRollEditor {
         this.automationContainer = document.getElementById('automationContainer');
         this.channelSelect = document.getElementById('channelSelect');
         
+        this.velocityPanel = document.getElementById('velocityPanel');
+        this.velocityCanvas = document.getElementById('velocityCanvas');
+        this.velocityCtx = this.velocityCanvas.getContext('2d');
+        this.velocityCanvasContainer = document.getElementById('velocityCanvasContainer');
+        
         this.createInitialTracks();
         this.loadDemoMelody();
         this.createKeyboard();
@@ -210,6 +221,11 @@ class PianoRollEditor {
             if (this.keyboardInner) {
                 this.keyboardInner.style.transform = `translateY(${-this.gridContainer.scrollTop}px)`;
             }
+        }, 100);
+        
+        setTimeout(() => {
+            this.resizeVelocityCanvas();
+            this.renderVelocity();
         }, 100);
     }
     
@@ -386,6 +402,9 @@ class PianoRollEditor {
             this.scrollY = this.gridContainer.scrollTop;
             this.rulerContainer.scrollLeft = this.scrollX;
             this.automationCanvasContainer.scrollLeft = this.scrollX;
+            if (this.velocityCanvasContainer) {
+                this.velocityCanvasContainer.scrollLeft = this.scrollX;
+            }
             if (this.keyboardInner) {
                 this.keyboardInner.style.transform = `translateY(${-this.scrollY}px)`;
             }
@@ -395,6 +414,9 @@ class PianoRollEditor {
             this.scrollX = this.automationCanvasContainer.scrollLeft;
             this.gridContainer.scrollLeft = this.scrollX;
             this.rulerContainer.scrollLeft = this.scrollX;
+            if (this.velocityCanvasContainer) {
+                this.velocityCanvasContainer.scrollLeft = this.scrollX;
+            }
         });
         
         this.canvas.addEventListener('mousedown', (e) => this.onMouseDown(e));
@@ -507,6 +529,50 @@ class PianoRollEditor {
         document.getElementById('addChannelCancel').addEventListener('click', () => {
             this.hideAddChannelDialog();
         });
+        
+        document.getElementById('importMidiBtn').addEventListener('click', () => {
+            document.getElementById('midiFileInput').click();
+        });
+        
+        document.getElementById('midiFileInput').addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                this.pendingMidiFile = file;
+                this.showImportMidiDialog();
+            }
+            e.target.value = '';
+        });
+        
+        document.getElementById('importMidiOk').addEventListener('click', () => {
+            this.hideImportMidiDialog();
+            if (this.pendingMidiFile) {
+                this.importMidiFile(this.pendingMidiFile);
+                this.pendingMidiFile = null;
+            }
+        });
+        
+        document.getElementById('importMidiCancel').addEventListener('click', () => {
+            this.hideImportMidiDialog();
+            this.pendingMidiFile = null;
+        });
+        
+        document.getElementById('toggleVelocityBtn').addEventListener('click', () => {
+            this.toggleVelocityPanel();
+        });
+        
+        this.velocityCanvas.addEventListener('mousedown', (e) => this.onVelocityMouseDown(e));
+        this.velocityCanvas.addEventListener('mousemove', (e) => this.onVelocityMouseMove(e));
+        this.velocityCanvas.addEventListener('mouseup', (e) => this.onVelocityMouseUp(e));
+        this.velocityCanvas.addEventListener('mouseleave', () => this.onVelocityMouseUp());
+        
+        this.velocityCanvasContainer.addEventListener('scroll', () => {
+            this.scrollX = this.velocityCanvasContainer.scrollLeft;
+            this.gridContainer.scrollLeft = this.scrollX;
+            this.rulerContainer.scrollLeft = this.scrollX;
+            this.automationCanvasContainer.scrollLeft = this.scrollX;
+        });
+        
+        this.velocityCanvas.addEventListener('wheel', (e) => this.onWheel(e), { passive: false });
     }
     
     resizeCanvas() {
@@ -536,9 +602,29 @@ class PianoRollEditor {
         this.automationCanvas.width = this.canvas.width;
         this.automationCanvas.height = Math.max(automationRect.height, 120);
         
+        this.resizeVelocityCanvas();
+        
         this.render();
         this.renderRuler();
         this.renderAutomation();
+        this.renderVelocity();
+    }
+    
+    resizeVelocityCanvas() {
+        if (!this.velocityCanvasContainer) return;
+        const velocityRect = this.velocityCanvasContainer.getBoundingClientRect();
+        
+        let maxTick = 64;
+        this.tracks.forEach(track => {
+            track.notes.forEach(note => {
+                const end = note.startTick + note.durationTicks;
+                if (end > maxTick) maxTick = end;
+            });
+        });
+        
+        const minWidth = maxTick * this.cellWidth + 200;
+        this.velocityCanvas.width = Math.max(velocityRect.width, minWidth, 3000);
+        this.velocityCanvas.height = Math.max(velocityRect.height, 200);
     }
     
     render() {
@@ -799,6 +885,7 @@ class PianoRollEditor {
                 this.renderTrackList();
                 this.renderChannelSelect();
                 this.render();
+                this.renderVelocity();
             });
             
             item.querySelector('.track-delete').addEventListener('click', (e) => {
@@ -2494,6 +2581,653 @@ class PianoRollEditor {
     exportMidi() {
         const midiExporter = new MidiExporter(this.tracks, this.bpm);
         midiExporter.export();
+    }
+    
+    showImportMidiDialog() {
+        document.getElementById('importMidiDialog').classList.add('show');
+    }
+    
+    hideImportMidiDialog() {
+        document.getElementById('importMidiDialog').classList.remove('show');
+    }
+    
+    importMidiFile(file) {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            try {
+                const parser = new MidiParser(e.target.result);
+                const midiData = parser.parse();
+                this.applyMidiData(midiData);
+            } catch (err) {
+                alert('Failed to parse MIDI file: ' + err.message);
+            }
+        };
+        reader.onerror = () => {
+            alert('Failed to read MIDI file');
+        };
+        reader.readAsArrayBuffer(file);
+    }
+    
+    applyMidiData(midiData) {
+        const oldTracks = JSON.parse(JSON.stringify(this.tracks));
+        const oldActiveTrackId = this.activeTrackId;
+        const oldActiveChannelId = this.activeChannelId;
+        
+        const midiTicksPerQuarter = midiData.ticksPerQuarter;
+        const editorTicksPerQuarter = TICKS_PER_BEAT;
+        const tickRatio = editorTicksPerQuarter / midiTicksPerQuarter;
+        
+        this.tracks = [];
+        this.selectedNotes.clear();
+        
+        let hasNotes = false;
+        
+        midiData.tracks.forEach((midiTrack, index) => {
+            if (midiTrack.notes.length === 0 && this.tracks.length > 0) return;
+            
+            const track = this.addTrack(
+                midiTrack.name || `Track ${index + 1}`,
+                TRACK_COLORS[this.tracks.length % TRACK_COLORS.length]
+            );
+            
+            midiTrack.notes.forEach(midiNote => {
+                const startTick = Math.max(0, Math.round(midiNote.startTick * tickRatio));
+                const durationTicks = Math.max(1, Math.round(midiNote.durationTicks * tickRatio));
+                const pitch = Math.max(MIN_PITCH, Math.min(MAX_PITCH, midiNote.pitch));
+                
+                track.notes.push({
+                    id: generateId(),
+                    track: track.id,
+                    pitch,
+                    startTick,
+                    durationTicks,
+                    velocity: Math.max(1, Math.min(127, midiNote.velocity))
+                });
+                hasNotes = true;
+            });
+        });
+        
+        if (this.tracks.length === 0) {
+            this.addTrack('Track 1', TRACK_COLORS[0]);
+        }
+        
+        this.activeTrackId = this.tracks[0].id;
+        this.activeChannelId = this.tracks[0].activeChannelId;
+        
+        const savedTracks = JSON.parse(JSON.stringify(this.tracks));
+        const savedActiveTrackId = this.activeTrackId;
+        const savedActiveChannelId = this.activeChannelId;
+        
+        this.executeCommand({
+            type: 'importMidi',
+            oldTracks,
+            oldActiveTrackId,
+            oldActiveChannelId,
+            savedTracks,
+            savedActiveTrackId,
+            savedActiveChannelId,
+            undo: () => {
+                this.tracks = JSON.parse(JSON.stringify(oldTracks));
+                this.activeTrackId = oldActiveTrackId;
+                this.activeChannelId = oldActiveChannelId;
+                this.selectedNotes.clear();
+                this.renderTrackList();
+                this.renderChannelSelect();
+                this.resizeCanvas();
+                this.render();
+                this.renderVelocity();
+            },
+            redo: () => {
+                this.tracks = JSON.parse(JSON.stringify(savedTracks));
+                this.activeTrackId = savedActiveTrackId;
+                this.activeChannelId = savedActiveChannelId;
+                this.selectedNotes.clear();
+                this.renderTrackList();
+                this.renderChannelSelect();
+                this.resizeCanvas();
+                this.render();
+                this.renderVelocity();
+            }
+        });
+        
+        this.renderTrackList();
+        this.renderChannelSelect();
+        this.resizeCanvas();
+        this.render();
+        this.renderVelocity();
+        
+        if (hasNotes) {
+            setTimeout(() => {
+                this.gridContainer.scrollLeft = 0;
+                this.velocityCanvasContainer.scrollLeft = 0;
+            }, 50);
+        }
+    }
+    
+    toggleVelocityPanel() {
+        this.velocityCollapsed = !this.velocityCollapsed;
+        if (this.velocityCollapsed) {
+            this.velocityPanel.classList.add('collapsed');
+        } else {
+            this.velocityPanel.classList.remove('collapsed');
+            setTimeout(() => {
+                this.resizeVelocityCanvas();
+                this.renderVelocity();
+            }, 50);
+        }
+    }
+    
+    renderVelocity() {
+        if (!this.velocityCtx || !this.velocityCanvas) return;
+        const ctx = this.velocityCtx;
+        const width = this.velocityCanvas.width;
+        const height = this.velocityCanvas.height;
+        if (width === 0 || height === 0) return;
+        
+        const track = this.getActiveTrack();
+        
+        ctx.fillStyle = '#222';
+        ctx.fillRect(0, 0, width, height);
+        
+        ctx.strokeStyle = '#2a2a2a';
+        ctx.lineWidth = 1;
+        for (let v = 0; v <= 127; v += 32) {
+            const y = this.velocityToY(v, height);
+            ctx.beginPath();
+            ctx.moveTo(0, y);
+            ctx.lineTo(width, y);
+            ctx.stroke();
+        }
+        
+        ctx.fillStyle = '#666';
+        ctx.font = '10px sans-serif';
+        ctx.fillText('127', 4, 12);
+        ctx.fillText('0', 4, height - 4);
+        
+        const totalTicks = Math.ceil(width / this.cellWidth);
+        for (let tick = 0; tick <= totalTicks; tick++) {
+            const x = tick * this.cellWidth;
+            const isBar = tick % TICKS_PER_BAR === 0;
+            const isBeat = tick % TICKS_PER_BEAT === 0;
+            
+            ctx.strokeStyle = isBar ? '#444' : isBeat ? '#3a3a3a' : '#2e2e2e';
+            ctx.lineWidth = isBar ? 2 : 1;
+            ctx.beginPath();
+            ctx.moveTo(x, 0);
+            ctx.lineTo(x, height);
+            ctx.stroke();
+        }
+        
+        if (!track) return;
+        
+        const sortedNotes = [...track.notes].sort((a, b) => a.startTick - b.startTick);
+        
+        sortedNotes.forEach(note => {
+            const isSelected = this.selectedNotes.has(note.id);
+            const barCenterX = (note.startTick + note.durationTicks / 2) * this.cellWidth;
+            const maxBarWidth = Math.max(6, this.cellWidth * 0.8);
+            const barWidth = Math.min(maxBarWidth, Math.max(6, note.durationTicks * this.cellWidth * 0.6));
+            const barX = barCenterX - barWidth / 2;
+            const barHeight = (note.velocity / 127) * (height - 20);
+            const barY = height - barHeight - 10;
+            
+            const brightness = 0.4 + (note.velocity / 127) * 0.6;
+            const barColor = isSelected ? '#fff' : this.adjustColorBrightness(track.color, brightness);
+            
+            ctx.fillStyle = barColor;
+            ctx.fillRect(barX, barY, barWidth, barHeight);
+            
+            if (isSelected) {
+                ctx.strokeStyle = '#4a9eff';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(barX - 1, barY - 1, barWidth + 2, barHeight + 2);
+            }
+            
+            ctx.fillStyle = isSelected ? '#4a9eff' : barColor;
+            const handleY = barY - 2;
+            ctx.fillRect(barX, handleY, barWidth, 4);
+        });
+        
+        if (this.velocitySelectionBox) {
+            ctx.strokeStyle = '#4a9eff';
+            ctx.lineWidth = 1;
+            ctx.setLineDash([5, 5]);
+            ctx.strokeRect(
+                this.velocitySelectionBox.x,
+                this.velocitySelectionBox.y,
+                this.velocitySelectionBox.width,
+                this.velocitySelectionBox.height
+            );
+            ctx.setLineDash([]);
+        }
+        
+        if (this.isPlaying || this.isPaused) {
+            const playX = this.playTick * this.cellWidth;
+            ctx.strokeStyle = '#ff4444';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(playX, 0);
+            ctx.lineTo(playX, height);
+            ctx.stroke();
+        }
+    }
+    
+    velocityToY(velocity, height) {
+        return height - 10 - (velocity / 127) * (height - 20);
+    }
+    
+    yToVelocity(y, height) {
+        const clampedY = Math.max(10, Math.min(height - 10, y));
+        return Math.round(((height - clampedY - 10) / (height - 20)) * 127);
+    }
+    
+    getVelocityMousePosition(e) {
+        const rect = this.velocityCanvas.getBoundingClientRect();
+        return {
+            x: e.clientX - rect.left + this.velocityCanvasContainer.scrollLeft,
+            y: e.clientY - rect.top
+        };
+    }
+    
+    getVelocityBarRect(note, height) {
+        const barCenterX = (note.startTick + note.durationTicks / 2) * this.cellWidth;
+        const maxBarWidth = Math.max(6, this.cellWidth * 0.8);
+        const barWidth = Math.min(maxBarWidth, Math.max(6, note.durationTicks * this.cellWidth * 0.6));
+        const barX = barCenterX - barWidth / 2;
+        const barHeight = (note.velocity / 127) * (height - 20);
+        const barY = height - barHeight - 10;
+        return { barX, barWidth, barY, barHeight };
+    }
+    
+    findVelocityNoteAt(x, y) {
+        const track = this.getActiveTrack();
+        if (!track) return null;
+        
+        const height = this.velocityCanvas.height;
+        
+        for (const note of track.notes) {
+            const { barX, barWidth, barY } = this.getVelocityBarRect(note, height);
+            
+            if (x >= barX - 5 && x <= barX + barWidth + 5 &&
+                y >= barY - 5 && y <= height - 5) {
+                return note;
+            }
+        }
+        return null;
+    }
+    
+    isOnVelocityHandle(x, y, note) {
+        const height = this.velocityCanvas.height;
+        const { barX, barWidth, barY } = this.getVelocityBarRect(note, height);
+        
+        return y >= barY - 8 && y <= barY + 8 &&
+               x >= barX - 5 && x <= barX + barWidth + 5;
+    }
+    
+    onVelocityMouseDown(e) {
+        if (e.button !== 0) return;
+        
+        const pos = this.getVelocityMousePosition(e);
+        const note = this.findVelocityNoteAt(pos.x, pos.y);
+        
+        if (e.shiftKey && note) {
+            if (this.selectedNotes.has(note.id)) {
+                this.selectedNotes.delete(note.id);
+            } else {
+                this.selectedNotes.add(note.id);
+            }
+            this.render();
+            this.renderVelocity();
+            return;
+        }
+        
+        if (note && this.isOnVelocityHandle(pos.x, pos.y, note)) {
+            if (!this.selectedNotes.has(note.id)) {
+                this.selectedNotes.clear();
+                this.selectedNotes.add(note.id);
+            }
+            
+            const selectedNoteIds = Array.from(this.selectedNotes);
+            const velocityChanges = selectedNoteIds.map(id => {
+                const n = this.findNoteById(id);
+                return n ? { note: n, oldVelocity: n.velocity } : null;
+            }).filter(v => v !== null);
+            
+            this.velocityDragState = {
+                type: 'adjustVelocity',
+                startY: pos.y,
+                velocityChanges,
+                startVelocities: velocityChanges.map(v => v.oldVelocity)
+            };
+            
+            this.render();
+            this.renderVelocity();
+            return;
+        }
+        
+        if (note) {
+            if (this.selectedNotes.has(note.id)) {
+                this.velocityDragState = {
+                    type: 'adjustVelocity',
+                    startY: pos.y,
+                    velocityChanges: Array.from(this.selectedNotes).map(id => {
+                        const n = this.findNoteById(id);
+                        return { note: n, oldVelocity: n.velocity };
+                    }).filter(v => v !== null),
+                    startVelocities: Array.from(this.selectedNotes).map(id => {
+                        const n = this.findNoteById(id);
+                        return n ? n.velocity : 100;
+                    })
+                };
+            } else {
+                this.selectedNotes.clear();
+                this.selectedNotes.add(note.id);
+                
+                this.velocityDragState = {
+                    type: 'adjustVelocity',
+                    startY: pos.y,
+                    velocityChanges: [{ note, oldVelocity: note.velocity }],
+                    startVelocities: [note.velocity]
+                };
+            }
+            this.render();
+            this.renderVelocity();
+            return;
+        }
+        
+        this.selectedNotes.clear();
+        this.velocityDragState = {
+            type: 'select',
+            startX: pos.x,
+            startY: pos.y
+        };
+        
+        this.render();
+        this.renderVelocity();
+    }
+    
+    onVelocityMouseMove(e) {
+        if (!this.velocityDragState) return;
+        
+        const pos = this.getVelocityMousePosition(e);
+        const height = this.velocityCanvas.height;
+        
+        if (this.velocityDragState.type === 'adjustVelocity') {
+            const deltaY = pos.y - this.velocityDragState.startY;
+            const deltaVelocity = -Math.round(deltaY / ((height - 20) / 127));
+            
+            this.velocityDragState.velocityChanges.forEach((vc, i) => {
+                const newVelocity = Math.max(1, Math.min(127, this.velocityDragState.startVelocities[i] + deltaVelocity));
+                vc.note.velocity = newVelocity;
+            });
+            
+            this.render();
+            this.renderVelocity();
+        } else if (this.velocityDragState.type === 'select') {
+            this.velocitySelectionBox = {
+                x: Math.min(this.velocityDragState.startX, pos.x),
+                y: Math.min(this.velocityDragState.startY, pos.y),
+                width: Math.abs(pos.x - this.velocityDragState.startX),
+                height: Math.abs(pos.y - this.velocityDragState.startY)
+            };
+            
+            this.selectedNotes.clear();
+            const track = this.getActiveTrack();
+            if (track) {
+                track.notes.forEach(note => {
+                    const { barX, barWidth, barY, barHeight } = this.getVelocityBarRect(note, height);
+                    
+                    if (this.rectsIntersect(this.velocitySelectionBox, {
+                        x: barX,
+                        y: barY,
+                        width: barWidth,
+                        height: barHeight + 10
+                    })) {
+                        this.selectedNotes.add(note.id);
+                    }
+                });
+            }
+            this.renderVelocity();
+        }
+    }
+    
+    onVelocityMouseUp(e) {
+        if (!this.velocityDragState) return;
+        
+        if (this.velocityDragState.type === 'adjustVelocity') {
+            const velocityChanges = this.velocityDragState.velocityChanges.map(vc => ({
+                note: vc.note,
+                oldVelocity: vc.oldVelocity,
+                newVelocity: vc.note.velocity
+            })).filter(vc => vc.oldVelocity !== vc.newVelocity);
+            
+            if (velocityChanges.length > 0) {
+                this.executeCommand({
+                    type: 'changeVelocity',
+                    velocityChanges,
+                    undo: () => {
+                        velocityChanges.forEach(({ note, oldVelocity }) => {
+                            note.velocity = oldVelocity;
+                        });
+                        this.render();
+                        this.renderVelocity();
+                    },
+                    redo: () => {
+                        velocityChanges.forEach(({ note, newVelocity }) => {
+                            note.velocity = newVelocity;
+                        });
+                        this.render();
+                        this.renderVelocity();
+                    }
+                });
+            }
+        }
+        
+        this.velocityDragState = null;
+        this.velocitySelectionBox = null;
+        this.render();
+        this.renderVelocity();
+    }
+}
+
+class MidiParser {
+    constructor(data) {
+        this.data = new Uint8Array(data);
+        this.offset = 0;
+        this.tracks = [];
+        this.format = 0;
+        this.ticksPerQuarter = 480;
+    }
+
+    parse() {
+        this.parseHeader();
+        this.parseTracks();
+        return {
+            format: this.format,
+            ticksPerQuarter: this.ticksPerQuarter,
+            tracks: this.tracks
+        };
+    }
+
+    readByte() {
+        return this.data[this.offset++];
+    }
+
+    readBytes(length) {
+        const bytes = this.data.slice(this.offset, this.offset + length);
+        this.offset += length;
+        return bytes;
+    }
+
+    readUint16() {
+        const value = (this.data[this.offset] << 8) | this.data[this.offset + 1];
+        this.offset += 2;
+        return value;
+    }
+
+    readUint32() {
+        const value = (this.data[this.offset] << 24) |
+                      (this.data[this.offset + 1] << 16) |
+                      (this.data[this.offset + 2] << 8) |
+                      this.data[this.offset + 3];
+        this.offset += 4;
+        return value;
+    }
+
+    readVariableLength() {
+        let value = 0;
+        let byte;
+        do {
+            byte = this.readByte();
+            value = (value << 7) | (byte & 0x7f);
+        } while (byte & 0x80);
+        return value;
+    }
+
+    readString(length) {
+        let str = '';
+        for (let i = 0; i < length; i++) {
+            str += String.fromCharCode(this.readByte());
+        }
+        return str;
+    }
+
+    parseHeader() {
+        const chunkType = this.readString(4);
+        if (chunkType !== 'MThd') {
+            throw new Error('Invalid MIDI file: missing MThd header');
+        }
+        const chunkLength = this.readUint32();
+        this.format = this.readUint16();
+        const numTracks = this.readUint16();
+        const division = this.readUint16();
+
+        if (division & 0x8000) {
+            throw new Error('SMPTE time code format not supported');
+        }
+        this.ticksPerQuarter = division & 0x7fff;
+
+        this.numTracks = numTracks;
+    }
+
+    parseTracks() {
+        for (let i = 0; i < this.numTracks; i++) {
+            this.tracks.push(this.parseTrack());
+        }
+    }
+
+    parseTrack() {
+        const chunkType = this.readString(4);
+        if (chunkType !== 'MTrk') {
+            throw new Error('Invalid MIDI file: missing MTrk chunk');
+        }
+        const chunkLength = this.readUint32();
+        const trackEnd = this.offset + chunkLength;
+
+        const track = {
+            name: `Track ${this.tracks.length + 1}`,
+            events: [],
+            notes: []
+        };
+
+        let runningStatus = null;
+        let absoluteTick = 0;
+        const activeNotes = new Map();
+
+        while (this.offset < trackEnd) {
+            const deltaTime = this.readVariableLength();
+            absoluteTick += deltaTime;
+
+            let statusByte = this.readByte();
+
+            if (statusByte < 0x80) {
+                if (runningStatus === null) {
+                    throw new Error('Invalid MIDI: running status without previous status');
+                }
+                this.offset--;
+                statusByte = runningStatus;
+            } else {
+                runningStatus = statusByte;
+            }
+
+            const eventType = statusByte & 0xf0;
+            const channel = statusByte & 0x0f;
+
+            if (statusByte === 0xff) {
+                this.parseMetaEvent(absoluteTick, track);
+            } else if (eventType === 0xf0 || eventType === 0xf7) {
+                this.parseSysExEvent();
+            } else if (eventType === 0x80) {
+                const pitch = this.readByte();
+                const velocity = this.readByte();
+                this.handleNoteOff(absoluteTick, pitch, activeNotes, track);
+            } else if (eventType === 0x90) {
+                const pitch = this.readByte();
+                const velocity = this.readByte();
+                if (velocity === 0) {
+                    this.handleNoteOff(absoluteTick, pitch, activeNotes, track);
+                } else {
+                    this.handleNoteOn(absoluteTick, pitch, velocity, activeNotes, track);
+                }
+            } else if (eventType === 0xa0) {
+                this.readByte();
+                this.readByte();
+            } else if (eventType === 0xb0) {
+                this.readByte();
+                this.readByte();
+            } else if (eventType === 0xc0) {
+                this.readByte();
+            } else if (eventType === 0xd0) {
+                this.readByte();
+            } else if (eventType === 0xe0) {
+                this.readByte();
+                this.readByte();
+            }
+        }
+
+        return track;
+    }
+
+    parseMetaEvent(tick, track) {
+        const metaType = this.readByte();
+        const length = this.readVariableLength();
+
+        if (metaType === 0x03) {
+            track.name = this.readString(length);
+        } else {
+            this.readBytes(length);
+        }
+    }
+
+    parseSysExEvent() {
+        const length = this.readVariableLength();
+        this.readBytes(length);
+    }
+
+    handleNoteOn(tick, pitch, velocity, activeNotes, track) {
+        const key = pitch;
+        if (activeNotes.has(key)) {
+            this.handleNoteOff(tick, pitch, activeNotes, track);
+        }
+        activeNotes.set(key, {
+            tick,
+            velocity,
+            pitch
+        });
+    }
+
+    handleNoteOff(tick, pitch, activeNotes, track) {
+        const key = pitch;
+        if (activeNotes.has(key)) {
+            const noteOn = activeNotes.get(key);
+            activeNotes.delete(key);
+            track.notes.push({
+                pitch: noteOn.pitch,
+                startTick: noteOn.tick,
+                durationTicks: tick - noteOn.tick,
+                velocity: noteOn.velocity
+            });
+        }
     }
 }
 

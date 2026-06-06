@@ -185,6 +185,8 @@ class PianoRollEditor {
         
         this.pendingMidiFile = null;
         
+        this.dialogOpen = false;
+        
         this.init();
     }
     
@@ -739,10 +741,12 @@ class PianoRollEditor {
     showPitchSelectDialog() {
         this.buildPitchSelectGrid();
         document.getElementById('pitchSelectDialog').classList.add('show');
+        this.dialogOpen = true;
     }
 
     hidePitchSelectDialog() {
         document.getElementById('pitchSelectDialog').classList.remove('show');
+        this.dialogOpen = false;
     }
 
     buildPitchSelectGrid() {
@@ -799,10 +803,12 @@ class PianoRollEditor {
         document.getElementById('velocityMin').value = 1;
         document.getElementById('velocityMax').value = 127;
         document.getElementById('velocityRangeDialog').classList.add('show');
+        this.dialogOpen = true;
     }
 
     hideVelocityRangeDialog() {
         document.getElementById('velocityRangeDialog').classList.remove('show');
+        this.dialogOpen = false;
     }
 
     selectNotesByVelocityRange(min, max) {
@@ -827,10 +833,17 @@ class PianoRollEditor {
     showTransposeDialog() {
         document.getElementById('transposeAmount').value = 0;
         document.getElementById('transposeDialog').classList.add('show');
+        this.dialogOpen = true;
+        setTimeout(() => {
+            const input = document.getElementById('transposeAmount');
+            input.focus();
+            input.select();
+        }, 50);
     }
 
     hideTransposeDialog() {
         document.getElementById('transposeDialog').classList.remove('show');
+        this.dialogOpen = false;
     }
 
     transposeSelectedNotes(semitones) {
@@ -888,30 +901,51 @@ class PianoRollEditor {
     showTimeShiftDialog() {
         document.getElementById('timeShiftAmount').value = 0;
         document.getElementById('timeShiftDialog').classList.add('show');
+        this.dialogOpen = true;
+        setTimeout(() => {
+            const input = document.getElementById('timeShiftAmount');
+            input.focus();
+            input.select();
+        }, 50);
     }
 
     hideTimeShiftDialog() {
         document.getElementById('timeShiftDialog').classList.remove('show');
+        this.dialogOpen = false;
     }
 
     timeShiftSelectedNotes(ticks) {
         if (this.selectedNotes.size === 0 || isNaN(ticks) || ticks === 0) return;
 
-        const shiftedNotes = [];
+        const selectedNoteObjs = [];
         this.selectedNotes.forEach(noteId => {
             const note = this.findNoteById(noteId);
-            if (note) {
-                const oldTick = note.startTick;
-                const newTick = Math.max(0, note.startTick + ticks);
-                if (oldTick !== newTick) {
-                    shiftedNotes.push({
-                        noteId: note.id,
-                        trackId: note.track,
-                        oldTick,
-                        newTick
-                    });
-                    note.startTick = newTick;
-                }
+            if (note) selectedNoteObjs.push(note);
+        });
+
+        if (selectedNoteObjs.length === 0) return;
+
+        let minShiftedTick = Infinity;
+        selectedNoteObjs.forEach(note => {
+            const shifted = note.startTick + ticks;
+            if (shifted < minShiftedTick) minShiftedTick = shifted;
+        });
+
+        const extraShift = minShiftedTick < 0 ? -minShiftedTick : 0;
+        const actualShift = ticks + extraShift;
+
+        const shiftedNotes = [];
+        selectedNoteObjs.forEach(note => {
+            const oldTick = note.startTick;
+            const newTick = note.startTick + actualShift;
+            if (oldTick !== newTick) {
+                shiftedNotes.push({
+                    noteId: note.id,
+                    trackId: note.track,
+                    oldTick,
+                    newTick
+                });
+                note.startTick = newTick;
             }
         });
 
@@ -1714,10 +1748,12 @@ class PianoRollEditor {
         }
         
         dialog.classList.add('show');
+        this.dialogOpen = true;
     }
     
     hideVelocityDialog() {
         document.getElementById('velocityDialog').classList.remove('show');
+        this.dialogOpen = false;
     }
     
     setSelectedNotesVelocity(velocity) {
@@ -2127,7 +2163,10 @@ class PianoRollEditor {
     }
     
     onKeyDown(e) {
-        if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+        if (this.dialogOpen) return;
+        
+        const tag = e.target.tagName;
+        if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA' || e.target.isContentEditable) return;
         
         const key = e.key.toLowerCase();
         
@@ -2483,10 +2522,12 @@ class PianoRollEditor {
     
     showAddChannelDialog() {
         document.getElementById('addChannelDialog').classList.add('show');
+        this.dialogOpen = true;
     }
     
     hideAddChannelDialog() {
         document.getElementById('addChannelDialog').classList.remove('show');
+        this.dialogOpen = false;
     }
     
     addAutomationChannel(type) {
@@ -3397,10 +3438,12 @@ class PianoRollEditor {
     
     showImportMidiDialog() {
         document.getElementById('importMidiDialog').classList.add('show');
+        this.dialogOpen = true;
     }
     
     hideImportMidiDialog() {
         document.getElementById('importMidiDialog').classList.remove('show');
+        this.dialogOpen = false;
     }
     
     importMidiFile(file) {

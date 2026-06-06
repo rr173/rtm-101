@@ -228,8 +228,12 @@
                 goodCount++;
             }
             if (combo > maxCombo) maxCombo = combo;
-            updateHUD();
+        } else {
+            combo = 0;
+            missCount++;
+            judge('Miss', '#ff4757', laneIdx);
         }
+        updateHUD();
     }
 
     function checkMisses() {
@@ -258,13 +262,18 @@
         const laneCenterX = canvasRect.left + laneIdx * LANE_WIDTH + LANE_WIDTH / 2;
         const judgeY = canvasRect.top + JUDGE_LINE_Y - 40;
 
-        judgePopup.textContent = text;
-        judgePopup.style.color = color;
-        judgePopup.style.left = laneCenterX + 'px';
-        judgePopup.style.top = judgeY + 'px';
-        judgePopup.classList.remove('show');
-        void judgePopup.offsetWidth;
-        judgePopup.classList.add('show');
+        const el = document.createElement('div');
+        el.className = 'judge-popup show';
+        el.textContent = text;
+        el.style.color = color;
+        el.style.left = laneCenterX + (Math.random() * 30 - 15) + 'px';
+        el.style.top = judgeY + 'px';
+        el.style.textShadow = '0 0 15px ' + color;
+        document.body.appendChild(el);
+
+        el.addEventListener('animationend', function () {
+            el.remove();
+        });
     }
 
     function getNoteY(noteTime) {

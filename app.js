@@ -1424,7 +1424,8 @@ class PianoRollEditor {
     stopRecording() {
         if (!this.isRecording) return;
         
-        this.recordingActiveNotes.forEach((_, pitch) => {
+        const activePitches = Array.from(this.recordingActiveNotes.keys());
+        activePitches.forEach(pitch => {
             this.stopRecordingNote(pitch);
         });
         
@@ -2429,6 +2430,11 @@ class PianoRollEditor {
     }
     
     pause() {
+        if (this.isRecording) {
+            this.stopRecording();
+            return;
+        }
+        
         this.isPlaying = false;
         this.isPaused = true;
         if (this.animationFrameId) {
@@ -2441,6 +2447,13 @@ class PianoRollEditor {
     }
     
     stop() {
+        if (this.isRecording) {
+            this.stopRecording();
+            this.playTick = 0;
+            this.render();
+            return;
+        }
+        
         this.isPlaying = false;
         this.isPaused = false;
         this.playTick = 0;

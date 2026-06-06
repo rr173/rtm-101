@@ -579,6 +579,439 @@ class PianoRollEditor {
         });
         
         this.velocityCanvas.addEventListener('wheel', (e) => this.onWheel(e), { passive: false });
+
+        document.getElementById('selectBtn').addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.toggleDropdown('selectMenu');
+        });
+
+        document.getElementById('transformBtn').addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.toggleDropdown('transformMenu');
+        });
+
+        document.querySelectorAll('#selectMenu .menu-item').forEach(item => {
+            item.addEventListener('click', () => {
+                const action = item.dataset.select;
+                this.handleSelectAction(action);
+                this.hideAllDropdowns();
+            });
+        });
+
+        document.querySelectorAll('#transformMenu .menu-item').forEach(item => {
+            item.addEventListener('click', () => {
+                const action = item.dataset.transform;
+                this.handleTransformAction(action);
+                this.hideAllDropdowns();
+            });
+        });
+
+        document.addEventListener('click', () => {
+            this.hideAllDropdowns();
+        });
+
+        document.getElementById('pitchSelectAllBtn').addEventListener('click', () => {
+            this.setAllPitchCheckboxes(true);
+        });
+
+        document.getElementById('pitchSelectNoneBtn').addEventListener('click', () => {
+            this.setAllPitchCheckboxes(false);
+        });
+
+        document.getElementById('pitchSelectOk').addEventListener('click', () => {
+            this.selectNotesByPitch();
+            this.hidePitchSelectDialog();
+        });
+
+        document.getElementById('pitchSelectCancel').addEventListener('click', () => {
+            this.hidePitchSelectDialog();
+        });
+
+        document.getElementById('velocityRangeOk').addEventListener('click', () => {
+            const min = parseInt(document.getElementById('velocityMin').value);
+            const max = parseInt(document.getElementById('velocityMax').value);
+            this.selectNotesByVelocityRange(min, max);
+            this.hideVelocityRangeDialog();
+        });
+
+        document.getElementById('velocityRangeCancel').addEventListener('click', () => {
+            this.hideVelocityRangeDialog();
+        });
+
+        document.getElementById('transposeOk').addEventListener('click', () => {
+            const amount = parseInt(document.getElementById('transposeAmount').value);
+            this.transposeSelectedNotes(amount);
+            this.hideTransposeDialog();
+        });
+
+        document.getElementById('transposeCancel').addEventListener('click', () => {
+            this.hideTransposeDialog();
+        });
+
+        document.getElementById('timeShiftOk').addEventListener('click', () => {
+            const amount = parseInt(document.getElementById('timeShiftAmount').value);
+            this.timeShiftSelectedNotes(amount);
+            this.hideTimeShiftDialog();
+        });
+
+        document.getElementById('timeShiftCancel').addEventListener('click', () => {
+            this.hideTimeShiftDialog();
+        });
+    }
+
+    toggleDropdown(menuId) {
+        const selectMenu = document.getElementById('selectMenu');
+        const transformMenu = document.getElementById('transformMenu');
+        const targetMenu = document.getElementById(menuId);
+
+        if (menuId === 'selectMenu') {
+            transformMenu.classList.remove('show');
+        } else {
+            selectMenu.classList.remove('show');
+        }
+
+        targetMenu.classList.toggle('show');
+    }
+
+    hideAllDropdowns() {
+        document.getElementById('selectMenu').classList.remove('show');
+        document.getElementById('transformMenu').classList.remove('show');
+    }
+
+    handleSelectAction(action) {
+        switch (action) {
+            case 'all':
+                this.selectAllNotes();
+                break;
+            case 'bypitch':
+                this.showPitchSelectDialog();
+                break;
+            case 'byvelocity':
+                this.showVelocityRangeDialog();
+                break;
+            case 'invert':
+                this.invertSelection();
+                break;
+        }
+    }
+
+    handleTransformAction(action) {
+        switch (action) {
+            case 'transpose':
+                this.showTransposeDialog();
+                break;
+            case 'timeshift':
+                this.showTimeShiftDialog();
+                break;
+            case 'humanize':
+                this.humanizeSelectedNotes();
+                break;
+        }
+    }
+
+    selectAllNotes() {
+        this.selectedNotes.clear();
+        const activeTrack = this.getActiveTrack();
+        if (activeTrack) {
+            activeTrack.notes.forEach(note => {
+                this.selectedNotes.add(note.id);
+            });
+        }
+        this.render();
+        this.renderVelocity();
+    }
+
+    invertSelection() {
+        const activeTrack = this.getActiveTrack();
+        if (!activeTrack) return;
+
+        const newSelection = new Set();
+        activeTrack.notes.forEach(note => {
+            if (!this.selectedNotes.has(note.id)) {
+                newSelection.add(note.id);
+            }
+        });
+        this.selectedNotes = newSelection;
+        this.render();
+        this.renderVelocity();
+    }
+
+    showPitchSelectDialog() {
+        this.buildPitchSelectGrid();
+        document.getElementById('pitchSelectDialog').classList.add('show');
+    }
+
+    hidePitchSelectDialog() {
+        document.getElementById('pitchSelectDialog').classList.remove('show');
+    }
+
+    buildPitchSelectGrid() {
+        const grid = document.getElementById('pitchSelectGrid');
+        grid.innerHTML = '';
+
+        for (let pitch = MAX_PITCH; pitch >= MIN_PITCH; pitch--) {
+            const checkbox = document.createElement('div');
+            const isBlack = isBlackKey(pitch);
+            checkbox.className = `pitch-checkbox ${isBlack ? 'black-key' : ''}`;
+            checkbox.dataset.pitch = pitch;
+            checkbox.textContent = getNoteName(pitch);
+
+            checkbox.addEventListener('click', () => {
+                checkbox.classList.toggle('checked');
+            });
+
+            grid.appendChild(checkbox);
+        }
+    }
+
+    setAllPitchCheckboxes(checked) {
+        const checkboxes = document.querySelectorAll('#pitchSelectGrid .pitch-checkbox');
+        checkboxes.forEach(cb => {
+            if (checked) {
+                cb.classList.add('checked');
+            } else {
+                cb.classList.remove('checked');
+            }
+        });
+    }
+
+    selectNotesByPitch() {
+        const selectedPitches = new Set();
+        const checkboxes = document.querySelectorAll('#pitchSelectGrid .pitch-checkbox.checked');
+        checkboxes.forEach(cb => {
+            selectedPitches.add(parseInt(cb.dataset.pitch));
+        });
+
+        this.selectedNotes.clear();
+        const activeTrack = this.getActiveTrack();
+        if (activeTrack) {
+            activeTrack.notes.forEach(note => {
+                if (selectedPitches.has(note.pitch)) {
+                    this.selectedNotes.add(note.id);
+                }
+            });
+        }
+        this.render();
+        this.renderVelocity();
+    }
+
+    showVelocityRangeDialog() {
+        document.getElementById('velocityMin').value = 1;
+        document.getElementById('velocityMax').value = 127;
+        document.getElementById('velocityRangeDialog').classList.add('show');
+    }
+
+    hideVelocityRangeDialog() {
+        document.getElementById('velocityRangeDialog').classList.remove('show');
+    }
+
+    selectNotesByVelocityRange(min, max) {
+        if (isNaN(min) || isNaN(max)) return;
+        min = Math.max(1, Math.min(127, min));
+        max = Math.max(1, Math.min(127, max));
+        if (min > max) [min, max] = [max, min];
+
+        this.selectedNotes.clear();
+        const activeTrack = this.getActiveTrack();
+        if (activeTrack) {
+            activeTrack.notes.forEach(note => {
+                if (note.velocity >= min && note.velocity <= max) {
+                    this.selectedNotes.add(note.id);
+                }
+            });
+        }
+        this.render();
+        this.renderVelocity();
+    }
+
+    showTransposeDialog() {
+        document.getElementById('transposeAmount').value = 0;
+        document.getElementById('transposeDialog').classList.add('show');
+    }
+
+    hideTransposeDialog() {
+        document.getElementById('transposeDialog').classList.remove('show');
+    }
+
+    transposeSelectedNotes(semitones) {
+        if (this.selectedNotes.size === 0 || isNaN(semitones) || semitones === 0) return;
+
+        const transposedNotes = [];
+        this.selectedNotes.forEach(noteId => {
+            const note = this.findNoteById(noteId);
+            if (note) {
+                const oldPitch = note.pitch;
+                const newPitch = Math.max(MIN_PITCH, Math.min(MAX_PITCH, note.pitch + semitones));
+                if (oldPitch !== newPitch) {
+                    transposedNotes.push({
+                        noteId: note.id,
+                        trackId: note.track,
+                        oldPitch,
+                        newPitch
+                    });
+                    note.pitch = newPitch;
+                }
+            }
+        });
+
+        if (transposedNotes.length === 0) return;
+
+        this.executeCommand({
+            type: 'transposeNotes',
+            transposedNotes,
+            undo: () => {
+                transposedNotes.forEach(({ noteId, trackId, oldPitch }) => {
+                    const track = this.tracks.find(t => t.id === trackId);
+                    if (!track) return;
+                    const note = track.notes.find(n => n.id === noteId);
+                    if (note) note.pitch = oldPitch;
+                });
+                this.render();
+                this.renderVelocity();
+            },
+            redo: () => {
+                transposedNotes.forEach(({ noteId, trackId, newPitch }) => {
+                    const track = this.tracks.find(t => t.id === trackId);
+                    if (!track) return;
+                    const note = track.notes.find(n => n.id === noteId);
+                    if (note) note.pitch = newPitch;
+                });
+                this.render();
+                this.renderVelocity();
+            }
+        });
+
+        this.render();
+        this.renderVelocity();
+    }
+
+    showTimeShiftDialog() {
+        document.getElementById('timeShiftAmount').value = 0;
+        document.getElementById('timeShiftDialog').classList.add('show');
+    }
+
+    hideTimeShiftDialog() {
+        document.getElementById('timeShiftDialog').classList.remove('show');
+    }
+
+    timeShiftSelectedNotes(ticks) {
+        if (this.selectedNotes.size === 0 || isNaN(ticks) || ticks === 0) return;
+
+        const shiftedNotes = [];
+        this.selectedNotes.forEach(noteId => {
+            const note = this.findNoteById(noteId);
+            if (note) {
+                const oldTick = note.startTick;
+                const newTick = Math.max(0, note.startTick + ticks);
+                if (oldTick !== newTick) {
+                    shiftedNotes.push({
+                        noteId: note.id,
+                        trackId: note.track,
+                        oldTick,
+                        newTick
+                    });
+                    note.startTick = newTick;
+                }
+            }
+        });
+
+        if (shiftedNotes.length === 0) return;
+
+        this.executeCommand({
+            type: 'timeShiftNotes',
+            shiftedNotes,
+            undo: () => {
+                shiftedNotes.forEach(({ noteId, trackId, oldTick }) => {
+                    const track = this.tracks.find(t => t.id === trackId);
+                    if (!track) return;
+                    const note = track.notes.find(n => n.id === noteId);
+                    if (note) note.startTick = oldTick;
+                });
+                this.render();
+                this.renderVelocity();
+            },
+            redo: () => {
+                shiftedNotes.forEach(({ noteId, trackId, newTick }) => {
+                    const track = this.tracks.find(t => t.id === trackId);
+                    if (!track) return;
+                    const note = track.notes.find(n => n.id === noteId);
+                    if (note) note.startTick = newTick;
+                });
+                this.render();
+                this.renderVelocity();
+            }
+        });
+
+        this.render();
+        this.renderVelocity();
+    }
+
+    humanizeSelectedNotes() {
+        if (this.selectedNotes.size === 0) return;
+
+        const humanizedNotes = [];
+        this.selectedNotes.forEach(noteId => {
+            const note = this.findNoteById(noteId);
+            if (note) {
+                const oldTick = note.startTick;
+                const oldVelocity = note.velocity;
+
+                const tickOffset = Math.floor(Math.random() * 3) - 1;
+                const velocityOffset = Math.floor(Math.random() * 21) - 10;
+
+                const newTick = Math.max(0, note.startTick + tickOffset);
+                const newVelocity = Math.max(1, Math.min(127, note.velocity + velocityOffset));
+
+                if (oldTick !== newTick || oldVelocity !== newVelocity) {
+                    humanizedNotes.push({
+                        noteId: note.id,
+                        trackId: note.track,
+                        oldTick,
+                        oldVelocity,
+                        newTick,
+                        newVelocity
+                    });
+                    note.startTick = newTick;
+                    note.velocity = newVelocity;
+                }
+            }
+        });
+
+        if (humanizedNotes.length === 0) return;
+
+        this.executeCommand({
+            type: 'humanizeNotes',
+            humanizedNotes,
+            undo: () => {
+                humanizedNotes.forEach(({ noteId, trackId, oldTick, oldVelocity }) => {
+                    const track = this.tracks.find(t => t.id === trackId);
+                    if (!track) return;
+                    const note = track.notes.find(n => n.id === noteId);
+                    if (note) {
+                        note.startTick = oldTick;
+                        note.velocity = oldVelocity;
+                    }
+                });
+                this.render();
+                this.renderVelocity();
+            },
+            redo: () => {
+                humanizedNotes.forEach(({ noteId, trackId, newTick, newVelocity }) => {
+                    const track = this.tracks.find(t => t.id === trackId);
+                    if (!track) return;
+                    const note = track.notes.find(n => n.id === noteId);
+                    if (note) {
+                        note.startTick = newTick;
+                        note.velocity = newVelocity;
+                    }
+                });
+                this.render();
+                this.renderVelocity();
+            }
+        });
+
+        this.render();
+        this.renderVelocity();
     }
     
     resizeCanvas() {

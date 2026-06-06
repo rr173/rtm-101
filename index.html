@@ -39,6 +39,27 @@
                         <span class="snap-state">Off</span>
                     </button>
                 </div>
+                <div class="dropdown-control">
+                    <button id="selectBtn" class="toolbar-btn dropdown-btn">
+                        Select ▾
+                    </button>
+                    <div id="selectMenu" class="dropdown-menu">
+                        <div class="menu-item" data-select="all">All</div>
+                        <div class="menu-item" data-select="bypitch">By Pitch...</div>
+                        <div class="menu-item" data-select="byvelocity">By Velocity Range...</div>
+                        <div class="menu-item" data-select="invert">Invert</div>
+                    </div>
+                </div>
+                <div class="dropdown-control">
+                    <button id="transformBtn" class="toolbar-btn dropdown-btn">
+                        Transform ▾
+                    </button>
+                    <div id="transformMenu" class="dropdown-menu">
+                        <div class="menu-item" data-transform="transpose">Transpose...</div>
+                        <div class="menu-item" data-transform="timeshift">Time Shift...</div>
+                        <div class="menu-item" data-transform="humanize">Humanize</div>
+                    </div>
+                </div>
             </div>
             <div class="toolbar-right">
                 <button id="importMidiBtn" class="toolbar-btn">Import MIDI</button>
@@ -144,6 +165,73 @@
             <div class="dialog-buttons">
                 <button id="importMidiOk">Import</button>
                 <button id="importMidiCancel">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="pitchSelectDialog" class="dialog">
+        <div class="dialog-content pitch-select-dialog">
+            <h3>Select by Pitch</h3>
+            <div class="pitch-select-grid" id="pitchSelectGrid"></div>
+            <div class="dialog-buttons">
+                <button id="pitchSelectAllBtn">Select All</button>
+                <button id="pitchSelectNoneBtn">Select None</button>
+                <button id="pitchSelectOk">OK</button>
+                <button id="pitchSelectCancel">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="velocityRangeDialog" class="dialog">
+        <div class="dialog-content">
+            <h3>Select by Velocity Range</h3>
+            <div class="range-inputs">
+                <div class="range-input">
+                    <label for="velocityMin">Min:</label>
+                    <input type="number" id="velocityMin" min="1" max="127" value="1">
+                </div>
+                <div class="range-input">
+                    <label for="velocityMax">Max:</label>
+                    <input type="number" id="velocityMax" min="1" max="127" value="127">
+                </div>
+            </div>
+            <div class="dialog-buttons">
+                <button id="velocityRangeOk">OK</button>
+                <button id="velocityRangeCancel">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="transposeDialog" class="dialog">
+        <div class="dialog-content">
+            <h3>Transpose Notes</h3>
+            <div class="range-inputs">
+                <div class="range-input">
+                    <label for="transposeAmount">Semitones:</label>
+                    <input type="number" id="transposeAmount" value="0">
+                </div>
+            </div>
+            <p class="dialog-hint">Positive: up, Negative: down</p>
+            <div class="dialog-buttons">
+                <button id="transposeOk">OK</button>
+                <button id="transposeCancel">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="timeShiftDialog" class="dialog">
+        <div class="dialog-content">
+            <h3>Time Shift Notes</h3>
+            <div class="range-inputs">
+                <div class="range-input">
+                    <label for="timeShiftAmount">Ticks:</label>
+                    <input type="number" id="timeShiftAmount" value="0">
+                </div>
+            </div>
+            <p class="dialog-hint">Positive: later, Negative: earlier (cannot go below 0)</p>
+            <div class="dialog-buttons">
+                <button id="timeShiftOk">OK</button>
+                <button id="timeShiftCancel">Cancel</button>
             </div>
         </div>
     </div>

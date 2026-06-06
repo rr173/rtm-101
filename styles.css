@@ -756,3 +756,165 @@ body {
 ::-webkit-scrollbar-thumb:hover {
     background: #5d5d5d;
 }
+
+.dropdown-control {
+    position: relative;
+    margin-left: 16px;
+}
+
+.dropdown-btn {
+    min-width: 110px;
+}
+
+.dropdown-menu {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    background-color: #3d3d3d;
+    border: 1px solid #4d4d4d;
+    border-radius: 6px;
+    padding: 4px 0;
+    min-width: 180px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+    z-index: 1000;
+    display: none;
+}
+
+.dropdown-menu.show {
+    display: block;
+}
+
+.range-inputs {
+    display: flex;
+    gap: 16px;
+    margin: 12px 0;
+}
+
+.range-input {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+}
+
+.range-input label {
+    font-size: 13px;
+    color: #a0a0a0;
+    min-width: 60px;
+}
+
+.range-input input {
+    flex: 1;
+    padding: 6px 8px;
+    background-color: #2d2d2d;
+    border: 1px solid #4d4d4d;
+    border-radius: 4px;
+    color: #e0e0e0;
+    font-size: 13px;
+}
+
+.range-input input:focus {
+    outline: none;
+    border-color: #4a9eff;
+}
+
+.dialog-hint {
+    font-size: 12px;
+    color: #888;
+    margin-bottom: 8px;
+}
+
+.dialog-buttons button {
+    padding: 6px 16px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 13px;
+    background-color: #5d5d5d;
+    color: #e0e0e0;
+}
+
+.dialog-buttons button:hover {
+    background-color: #6d6d6d;
+}
+
+.dialog-buttons button:last-child,
+#pitchSelectOk, #velocityRangeOk, #transposeOk, #timeShiftOk {
+    background-color: #4a9eff;
+    color: white;
+}
+
+.dialog-buttons button:last-child:hover,
+#pitchSelectOk:hover, #velocityRangeOk:hover, #transposeOk:hover, #timeShiftOk:hover {
+    background-color: #3a8eef;
+}
+
+.pitch-select-dialog {
+    min-width: 500px;
+    max-width: 600px;
+}
+
+.pitch-select-grid {
+    display: grid;
+    grid-template-columns: repeat(12, 1fr);
+    gap: 4px;
+    max-height: 300px;
+    overflow-y: auto;
+    margin: 12px 0;
+    padding: 8px;
+    background-color: #2d2d2d;
+    border-radius: 4px;
+}
+
+.pitch-checkbox {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 6px 4px;
+    background-color: #3d3d3d;
+    border: 1px solid #4d4d4d;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 11px;
+    transition: all 0.15s;
+    user-select: none;
+}
+
+.pitch-checkbox:hover {
+    background-color: #4d4d4d;
+}
+
+.pitch-checkbox.black-key {
+    background-color: #2a2a2a;
+    color: #888;
+}
+
+.pitch-checkbox.black-key:hover {
+    background-color: #3a3a3a;
+}
+
+.pitch-checkbox.checked {
+    background-color: #4a9eff;
+    color: white;
+    border-color: #4a9eff;
+}
+
+.pitch-checkbox.black-key.checked {
+    background-color: #2a7edf;
+    border-color: #2a7edf;
+    color: white;
+}
+
+.pitch-checkbox input {
+    margin-right: 4px;
+}
+
+.dialog-buttons #pitchSelectAllBtn,
+.dialog-buttons #pitchSelectNoneBtn {
+    background-color: #3d3d3d;
+}
+
+.dialog-buttons #pitchSelectAllBtn:hover,
+.dialog-buttons #pitchSelectNoneBtn:hover {
+    background-color: #4d4d4d;
+}

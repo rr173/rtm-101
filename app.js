@@ -1328,16 +1328,15 @@ class PianoRollEditor {
         const x = e.clientX - rect.left + this.chordTrackContainer.scrollLeft;
         const beatTick = Math.floor(x / (this.cellWidth * TICKS_PER_BEAT)) * TICKS_PER_BEAT;
 
-        if (this.highlightedChordBeat === beatTick) {
-            this.highlightedChordBeat = null;
-            this.highlightedNoteIds = new Set();
+        const isCurrentlyHighlighted = this.highlightedChordBeat === beatTick;
+
+        if (isCurrentlyHighlighted) {
+            this.clearChordHighlight();
         } else {
             this.highlightedChordBeat = beatTick;
             this.highlightedNoteIds = new Set();
-            const data = this.chordData ? this.chordData.get(beatTick) : null;
-            if (data && data.notes) {
-                data.notes.forEach(note => this.highlightedNoteIds.add(note.id));
-            }
+            const { notes } = this.getPitchesAtBeat(beatTick);
+            notes.forEach(note => this.highlightedNoteIds.add(note.id));
         }
 
         this.renderChordTrack();
@@ -1376,8 +1375,22 @@ class PianoRollEditor {
         a.click();
         URL.revokeObjectURL(url);
     }
+
+    refreshChordHighlight() {
+        if (this.highlightedChordBeat === null) return;
+
+        const { notes } = this.getPitchesAtBeat(this.highlightedChordBeat);
+        this.highlightedNoteIds = new Set(notes.map(n => n.id));
+    }
+
+    clearChordHighlight() {
+        this.highlightedChordBeat = null;
+        this.highlightedNoteIds = new Set();
+    }
     
     render() {
+        this.refreshChordHighlight();
+
         const ctx = this.ctx;
         const width = this.canvas.width;
         const height = this.canvas.height;
@@ -3379,6 +3392,8 @@ class PianoRollEditor {
         const command = this.undoStack.pop();
         command.undo();
         this.redoStack.push(command);
+        this.refreshChordHighlight();
+        this.renderChordTrack();
     }
     
     redo() {
@@ -3386,6 +3401,8 @@ class PianoRollEditor {
         const command = this.redoStack.pop();
         command.redo();
         this.undoStack.push(command);
+        this.refreshChordHighlight();
+        this.renderChordTrack();
     }
     
     rectsIntersect(a, b) {

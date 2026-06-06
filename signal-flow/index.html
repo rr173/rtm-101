@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Signal Flow Editor</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="app-container">
+        <div class="toolbar">
+            <div class="toolbar-left">
+                <button id="runBtn" class="toolbar-btn run-btn">▶ 运行</button>
+                <button id="stopBtn" class="toolbar-btn">⏹ 停止</button>
+                <button id="clearBtn" class="toolbar-btn">🗑 清空</button>
+                <span id="statusLabel" class="status-label">已停止</span>
+            </div>
+            <div class="toolbar-right">
+                <span class="hint-text">拖拽节点到画布 · 从输出口拖到输入口连线 · 双击节点改参数 · Delete 删除</span>
+            </div>
+        </div>
+
+        <div class="main-content">
+            <div class="sidebar">
+                <div class="sidebar-title">节点库</div>
+                <div class="node-palette">
+                    <div class="palette-item" draggable="true" data-type="source">
+                        <span class="palette-icon">◈</span>
+                        <span class="palette-label">信号源</span>
+                    </div>
+                    <div class="palette-item" draggable="true" data-type="gain">
+                        <span class="palette-icon">×</span>
+                        <span class="palette-label">增益</span>
+                    </div>
+                    <div class="palette-item" draggable="true" data-type="adder">
+                        <span class="palette-icon">Σ</span>
+                        <span class="palette-label">加法器</span>
+                    </div>
+                    <div class="palette-item" draggable="true" data-type="delay">
+                        <span class="palette-icon">⏱</span>
+                        <span class="palette-label">延迟</span>
+                    </div>
+                    <div class="palette-item" draggable="true" data-type="filter">
+                        <span class="palette-icon">∿</span>
+                        <span class="palette-label">低通滤波</span>
+                    </div>
+                    <div class="palette-item" draggable="true" data-type="scope">
+                        <span class="palette-icon">📈</span>
+                        <span class="palette-label">示波器</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="canvas-container" id="canvasContainer">
+                <svg id="wireSvg" class="wire-svg">
+                    <defs>
+                        <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+                            <polygon points="0 0, 10 3.5, 0 7" fill="#6bcb77" />
+                        </marker>
+                    </defs>
+                </svg>
+                <div id="nodesLayer" class="nodes-layer"></div>
+            </div>
+        </div>
+    </div>
+
+    <div id="paramDialog" class="dialog">
+        <div class="dialog-content">
+            <h3 id="paramTitle">节点参数</h3>
+            <div id="paramFields" class="param-fields"></div>
+            <div class="dialog-buttons">
+                <button id="paramCancel">取消</button>
+                <button id="paramOk">确定</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="toast" class="toast"></div>
+
+    <script src="app.js"></script>
+</body>
+</html>

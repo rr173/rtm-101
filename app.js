@@ -5,6 +5,16 @@ const MIN_PITCH = 24;
 const MAX_PITCH = 95;
 const TOTAL_PITCHES = MAX_PITCH - MIN_PITCH + 1;
 
+const KEYBOARD_WHITE_KEYS = {
+    'a': 0, 's': 1, 'd': 2, 'f': 3, 'g': 4, 'h': 5, 'j': 6, 'k': 7, 'l': 8
+};
+const KEYBOARD_BLACK_KEYS = {
+    'w': 0, 'e': 1, 't': 2, 'y': 3, 'u': 4
+};
+const WHITE_PITCH_OFFSETS = [0, 2, 4, 5, 7, 9, 11, 12, 14];
+const BLACK_PITCH_OFFSETS = [1, 3, 6, 8, 10];
+const BASE_OCTAVE_PITCH = 60;
+
 const TRACK_COLORS = [
     '#4a9eff', '#ff6b6b', '#ffd93d', '#6bcb77',
     '#9b59b6', '#e67e22', '#1abc9c', '#e84393'
@@ -155,6 +165,17 @@ class PianoRollEditor {
         
         this.audioContext = null;
         this.activeOscillators = new Map();
+        
+        this.isRecording = false;
+        this.recordingStartTick = 0;
+        this.recordingActiveNotes = new Map();
+        this.recordingCompletedNotes = [];
+        this.keyboardOctave = 0;
+        this.pressedComputerKeys = new Set();
+        
+        this.quantizeUnit = 1;
+        this.metronomeEnabled = false;
+        this.lastMetronomeTick = -1;
         
         this.init();
     }
@@ -399,10 +420,17 @@ class PianoRollEditor {
             this.hideInterpolationMenu();
         });
         document.addEventListener('keydown', (e) => this.onKeyDown(e));
+        document.addEventListener('keyup', (e) => this.onKeyUp(e));
+        
+        document.getElementById('recordBtn').addEventListener('click', () => this.toggleRecording());
+        document.getElementById('metronomeBtn').addEventListener('click', () => this.toggleMetronome());
+        document.getElementById('quantizeSelect').addEventListener('change', (e) => {
+            this.quantizeUnit = parseInt(e.target.value) || 0;
+        });
         
         document.getElementById('playBtn').addEventListener('click', () => this.play());
         document.getElementById('pauseBtn').addEventListener('click', () => this.pause());
-        document.getElementById('stopBtn').addEventListener('click', () => this.stop());
+        document.getElementById('stopBtn').addEventListener('click', () => this.stopRecordingOrPlayback());
         document.getElementById('bpmInput').addEventListener('change', (e) => {
             this.bpm = Math.max(40, Math.min(300, parseInt(e.target.value) || 120));
             e.target.value = this.bpm;
@@ -597,6 +625,40 @@ class PianoRollEditor {
             ctx.fillStyle = 'rgba(74, 158, 255, 0.5)';
             this.drawRoundRect(x + 2, y + 2, w - 4, h - 4, 3);
             ctx.fill();
+        }
+        
+        if (this.isRecording) {
+            const activeTrack = this.getActiveTrack();
+            const trackColor = activeTrack ? activeTrack.color : '#4a9eff';
+            
+            this.recordingActiveNotes.forEach((noteData, pitch) => {
+                const currentTick = this.playTick;
+                let startTick = noteData.startTick;
+                let durationTicks = currentTick - startTick;
+                
+                if (this.quantizeUnit > 0) {
+                    startTick = this.quantizeTick(startTick);
+                    const quantizedEnd = this.quantizeTick(currentTick);
+                    durationTicks = Math.max(this.quantizeUnit, quantizedEnd - startTick);
+                }
+                
+                startTick = Math.max(0, startTick);
+                durationTicks = Math.max(0.5, durationTicks);
+                
+                const x = startTick * this.cellWidth;
+                const y = (MAX_PITCH - pitch) * this.cellHeight;
+                const w = durationTicks * this.cellWidth;
+                const h = this.cellHeight;
+                
+                ctx.fillStyle = 'rgba(255, 107, 107, 0.4)';
+                this.drawRoundRect(x + 2, y + 2, w - 4, h - 4, 3);
+                ctx.fill();
+                
+                ctx.strokeStyle = '#ff6b6b';
+                ctx.lineWidth = 1;
+                this.drawRoundRect(x + 2, y + 2, w - 4, h - 4, 3);
+                ctx.stroke();
+            });
         }
         
         if (this.isPlaying || this.isPaused) {
@@ -1252,7 +1314,30 @@ class PianoRollEditor {
     }
     
     onKeyDown(e) {
-        if (e.target.tagName === 'INPUT') return;
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+        
+        const key = e.key.toLowerCase();
+        
+        if (this.isRecording) {
+            if (key === 'z') {
+                e.preventDefault();
+                this.keyboardOctave = Math.max(-2, this.keyboardOctave - 1);
+                return;
+            }
+            if (key === 'x') {
+                e.preventDefault();
+                this.keyboardOctave = Math.min(3, this.keyboardOctave + 1);
+                return;
+            }
+            
+            const pitch = this.computerKeyToPitch(key);
+            if (pitch !== null && !this.pressedComputerKeys.has(key)) {
+                e.preventDefault();
+                this.pressedComputerKeys.add(key);
+                this.startRecordingNote(pitch);
+                return;
+            }
+        }
         
         if (e.key === ' ') {
             e.preventDefault();
@@ -1261,6 +1346,9 @@ class PianoRollEditor {
             } else {
                 this.play();
             }
+        } else if (e.key.toLowerCase() === 'r' && !e.ctrlKey && !e.metaKey) {
+            e.preventDefault();
+            this.toggleRecording();
         } else if (e.key === 'Delete' || e.key === 'Backspace') {
             e.preventDefault();
             this.deleteSelectedNotes();
@@ -1284,6 +1372,205 @@ class PianoRollEditor {
             this.selectedNotes.clear();
             this.render();
         }
+    }
+    
+    onKeyUp(e) {
+        const key = e.key.toLowerCase();
+        
+        if (this.isRecording && this.pressedComputerKeys.has(key)) {
+            this.pressedComputerKeys.delete(key);
+            const pitch = this.computerKeyToPitch(key);
+            if (pitch !== null) {
+                this.stopRecordingNote(pitch);
+            }
+        }
+    }
+    
+    computerKeyToPitch(key) {
+        if (KEYBOARD_WHITE_KEYS.hasOwnProperty(key)) {
+            const idx = KEYBOARD_WHITE_KEYS[key];
+            return BASE_OCTAVE_PITCH + this.keyboardOctave * 12 + WHITE_PITCH_OFFSETS[idx];
+        }
+        if (KEYBOARD_BLACK_KEYS.hasOwnProperty(key)) {
+            const idx = KEYBOARD_BLACK_KEYS[key];
+            return BASE_OCTAVE_PITCH + this.keyboardOctave * 12 + BLACK_PITCH_OFFSETS[idx];
+        }
+        return null;
+    }
+    
+    toggleRecording() {
+        if (this.isRecording) {
+            this.stopRecording();
+        } else {
+            this.startRecording();
+        }
+    }
+    
+    startRecording() {
+        this.initAudio();
+        this.isRecording = true;
+        this.recordingStartTick = this.playTick;
+        this.recordingActiveNotes.clear();
+        this.recordingCompletedNotes = [];
+        this.lastMetronomeTick = -1;
+        
+        document.getElementById('recordBtn').classList.add('active');
+        
+        if (!this.isPlaying) {
+            this.play(true);
+        }
+    }
+    
+    stopRecording() {
+        if (!this.isRecording) return;
+        
+        this.recordingActiveNotes.forEach((_, pitch) => {
+            this.stopRecordingNote(pitch);
+        });
+        
+        this.isRecording = false;
+        document.getElementById('recordBtn').classList.remove('active');
+        
+        this.pressedComputerKeys.clear();
+        
+        document.querySelectorAll('.piano-key.recording-active').forEach(key => {
+            key.classList.remove('recording-active');
+        });
+        
+        if (this.recordingCompletedNotes.length > 0) {
+            this.commitRecordedNotes();
+        }
+        
+        if (this.isPlaying) {
+            this.pause();
+        }
+    }
+    
+    stopRecordingOrPlayback() {
+        if (this.isRecording) {
+            this.stopRecording();
+        } else {
+            this.stop();
+        }
+    }
+    
+    quantizeTick(tick) {
+        if (this.quantizeUnit <= 0) return tick;
+        return Math.round(tick / this.quantizeUnit) * this.quantizeUnit;
+    }
+    
+    startRecordingNote(pitch) {
+        if (pitch < MIN_PITCH || pitch > MAX_PITCH) return;
+        if (this.recordingActiveNotes.has(pitch)) return;
+        
+        const startTick = this.playTick;
+        const oscId = this.playNote(pitch, 100);
+        
+        this.recordingActiveNotes.set(pitch, {
+            startTick,
+            oscId
+        });
+        
+        const key = document.querySelector(`.piano-key[data-pitch="${pitch}"]`);
+        if (key) key.classList.add('recording-active');
+    }
+    
+    stopRecordingNote(pitch) {
+        const activeNote = this.recordingActiveNotes.get(pitch);
+        if (!activeNote) return;
+        
+        const endTick = this.playTick;
+        this.stopNote(activeNote.oscId);
+        this.recordingActiveNotes.delete(pitch);
+        
+        let startTick = this.quantizeTick(activeNote.startTick);
+        let durationTicks = Math.max(this.quantizeUnit || 1, this.quantizeTick(endTick) - startTick);
+        
+        startTick = Math.max(0, startTick);
+        
+        const note = {
+            id: generateId(),
+            track: this.activeTrackId,
+            pitch,
+            startTick,
+            durationTicks,
+            velocity: 100
+        };
+        
+        this.recordingCompletedNotes.push(note);
+        
+        const key = document.querySelector(`.piano-key[data-pitch="${pitch}"]`);
+        if (key) key.classList.remove('recording-active');
+    }
+    
+    commitRecordedNotes() {
+        const notes = this.recordingCompletedNotes;
+        const trackId = this.activeTrackId;
+        
+        const track = this.tracks.find(t => t.id === trackId);
+        notes.forEach(note => track.notes.push(note));
+        
+        this.executeCommand({
+            type: 'recordNotes',
+            notes,
+            trackId,
+            undo: () => {
+                const t = this.tracks.find(tr => tr.id === trackId);
+                notes.forEach(note => {
+                    const idx = t.notes.findIndex(n => n.id === note.id);
+                    if (idx !== -1) t.notes.splice(idx, 1);
+                });
+                this.selectedNotes.clear();
+                this.render();
+            },
+            redo: () => {
+                const t = this.tracks.find(tr => tr.id === trackId);
+                notes.forEach(note => t.notes.push(note));
+                this.selectedNotes.clear();
+                notes.forEach(note => this.selectedNotes.add(note.id));
+                this.render();
+            }
+        });
+        
+        this.selectedNotes.clear();
+        notes.forEach(note => this.selectedNotes.add(note.id));
+        this.recordingCompletedNotes = [];
+        this.render();
+    }
+    
+    toggleMetronome() {
+        this.metronomeEnabled = !this.metronomeEnabled;
+        const btn = document.getElementById('metronomeBtn');
+        const stateLabel = btn.querySelector('.metronome-state');
+        if (this.metronomeEnabled) {
+            btn.classList.add('active');
+            stateLabel.textContent = 'On';
+        } else {
+            btn.classList.remove('active');
+            stateLabel.textContent = 'Off';
+        }
+    }
+    
+    playMetronomeClick(isStrong) {
+        this.initAudio();
+        const now = this.audioContext.currentTime;
+        const duration = 0.1;
+        const freq = isStrong ? 1000 : 700;
+        
+        const osc = this.audioContext.createOscillator();
+        const gain = this.audioContext.createGain();
+        
+        osc.type = 'square';
+        osc.frequency.value = freq;
+        
+        gain.gain.setValueAtTime(0.3, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + duration);
+        
+        osc.connect(gain);
+        gain.connect(this.audioContext.destination);
+        
+        osc.start(now);
+        osc.stop(now + duration);
     }
     
     getActiveTrack() {
@@ -2050,7 +2337,7 @@ class PianoRollEditor {
         }, release * 1000);
     }
     
-    play() {
+    play(isRecordingMode = false) {
         if (this.isPlaying) return;
         
         this.initAudio();
@@ -2063,6 +2350,7 @@ class PianoRollEditor {
         const tickDuration = 60 / (this.bpm * TICKS_PER_BEAT);
         
         this.playStartTime = performance.now() - (this.playTick * tickDuration * 1000);
+        this.lastMetronomeTick = Math.floor(this.playTick / TICKS_PER_BEAT) - 1;
         
         const animate = () => {
             if (!this.isPlaying) return;
@@ -2093,6 +2381,15 @@ class PianoRollEditor {
                         }
                     });
                 });
+                
+                if (this.metronomeEnabled) {
+                    const beatIndex = Math.floor(tick / TICKS_PER_BEAT);
+                    if (beatIndex > this.lastMetronomeTick) {
+                        const isStrong = beatIndex % BEATS_PER_BAR === 0;
+                        this.playMetronomeClick(isStrong);
+                        this.lastMetronomeTick = beatIndex;
+                    }
+                }
             }
             
             this.activeOscillators.forEach((oscData) => {
@@ -2108,9 +2405,20 @@ class PianoRollEditor {
             this.playTick = newTick;
             
             const maxTick = this.getMaxTick();
-            if (this.playTick >= maxTick) {
+            if (!this.isRecording && this.playTick >= maxTick) {
                 this.stop();
                 return;
+            }
+            
+            const currentMaxCanvasTick = Math.floor(this.canvas.width / this.cellWidth);
+            if (this.playTick > currentMaxCanvasTick - TICKS_PER_BAR) {
+                this.resizeCanvas();
+            }
+            
+            const playX = this.playTick * this.cellWidth;
+            const visibleRight = this.scrollX + this.gridContainer.clientWidth - 100;
+            if (playX > visibleRight) {
+                this.gridContainer.scrollLeft = playX - this.gridContainer.clientWidth + 200;
             }
             
             this.render();
@@ -2164,6 +2472,9 @@ class PianoRollEditor {
                 });
             });
         });
+        if (this.isPlaying || this.isRecording) {
+            max = Math.max(max, Math.ceil(this.playTick) + TICKS_PER_BAR * 2);
+        }
         return max + TICKS_PER_BAR;
     }
     

@@ -10,12 +10,28 @@
     <div class="app-container">
         <div class="toolbar">
             <div class="toolbar-left">
+                <button id="recordBtn" class="toolbar-btn record-btn" title="Record (R)">⏺</button>
                 <button id="playBtn" class="toolbar-btn" title="Play (Space)">▶</button>
                 <button id="pauseBtn" class="toolbar-btn" title="Pause">⏸</button>
                 <button id="stopBtn" class="toolbar-btn" title="Stop">⏹</button>
                 <div class="bpm-control">
                     <label for="bpmInput">BPM:</label>
                     <input type="number" id="bpmInput" min="40" max="300" value="120">
+                </div>
+                <div class="quantize-control">
+                    <label for="quantizeSelect">Quantize:</label>
+                    <select id="quantizeSelect" class="quantize-select">
+                        <option value="0">Off</option>
+                        <option value="4">1/4</option>
+                        <option value="2">1/8</option>
+                        <option value="1" selected>1/16</option>
+                    </select>
+                </div>
+                <div class="metronome-control">
+                    <button id="metronomeBtn" class="toolbar-btn metronome-btn" title="Metronome">
+                        <span class="metronome-icon">🥁</span>
+                        <span class="metronome-state">Off</span>
+                    </button>
                 </div>
             </div>
             <div class="toolbar-right">

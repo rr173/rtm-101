@@ -269,25 +269,27 @@ class PianoRollEditor {
         this.renderTrackList();
         this.renderChannelSelect();
         this.render();
+        this.renderVelocity();
         
         this.executeCommand({
             type: 'removeTrack',
             trackIndex: index,
-            track: trackCopy,
+            trackCopy,
             trackId,
             undo: () => {
-                this.tracks.splice(index, 0, trackCopy);
+                this.tracks.splice(index, 0, JSON.parse(JSON.stringify(trackCopy)));
                 this.activeTrackId = trackId;
                 this.activeChannelId = trackCopy.activeChannelId;
                 this.renderTrackList();
                 this.renderChannelSelect();
                 this.render();
+                this.renderVelocity();
             },
             redo: () => {
                 const idx = this.tracks.findIndex(t => t.id === trackId);
                 if (idx !== -1) {
                     this.tracks.splice(idx, 1);
-                    if (this.activeTrackId === trackId) {
+                    if (this.activeTrackId === trackId && this.tracks.length > 0) {
                         this.activeTrackId = this.tracks[0].id;
                         this.activeChannelId = this.tracks[0].activeChannelId;
                     }
@@ -296,6 +298,7 @@ class PianoRollEditor {
                 this.renderTrackList();
                 this.renderChannelSelect();
                 this.render();
+                this.renderVelocity();
             }
         });
     }
@@ -1130,7 +1133,8 @@ class PianoRollEditor {
             this.selectedNotes.add(note.id);
         } else if (this.dragState.type === 'move') {
             const movedNotes = this.dragState.notePositions.map(({ note, startTick, startPitch }) => ({
-                note,
+                noteId: note.id,
+                trackId: note.track,
                 oldTick: startTick,
                 oldPitch: startPitch,
                 newTick: note.startTick,
@@ -1141,37 +1145,60 @@ class PianoRollEditor {
                 type: 'moveNotes',
                 movedNotes,
                 undo: () => {
-                    movedNotes.forEach(({ note, oldTick, oldPitch }) => {
+                    movedNotes.forEach(({ noteId, trackId, oldTick, oldPitch }) => {
+                        const track = this.tracks.find(t => t.id === trackId);
+                        if (!track) return;
+                        const note = track.notes.find(n => n.id === noteId);
+                        if (!note) return;
                         note.startTick = oldTick;
                         note.pitch = oldPitch;
                     });
                     this.render();
+                    this.renderVelocity();
                 },
                 redo: () => {
-                    movedNotes.forEach(({ note, newTick, newPitch }) => {
+                    movedNotes.forEach(({ noteId, trackId, newTick, newPitch }) => {
+                        const track = this.tracks.find(t => t.id === trackId);
+                        if (!track) return;
+                        const note = track.notes.find(n => n.id === noteId);
+                        if (!note) return;
                         note.startTick = newTick;
                         note.pitch = newPitch;
                     });
                     this.render();
+                    this.renderVelocity();
                 }
             });
         } else if (this.dragState.type === 'resize') {
             const note = this.dragState.note;
+            const noteId = note.id;
+            const trackId = note.track;
             const oldDuration = this.dragState.startDuration;
             const newDuration = note.durationTicks;
             
             this.executeCommand({
                 type: 'resizeNote',
-                note,
+                noteId,
+                trackId,
                 oldDuration,
                 newDuration,
                 undo: () => {
-                    note.durationTicks = oldDuration;
+                    const track = this.tracks.find(t => t.id === trackId);
+                    if (!track) return;
+                    const n = track.notes.find(x => x.id === noteId);
+                    if (!n) return;
+                    n.durationTicks = oldDuration;
                     this.render();
+                    this.renderVelocity();
                 },
                 redo: () => {
-                    note.durationTicks = newDuration;
+                    const track = this.tracks.find(t => t.id === trackId);
+                    if (!track) return;
+                    const n = track.notes.find(x => x.id === noteId);
+                    if (!n) return;
+                    n.durationTicks = newDuration;
                     this.render();
+                    this.renderVelocity();
                 }
             });
         }
@@ -1255,7 +1282,8 @@ class PianoRollEditor {
             const note = this.findNoteById(noteId);
             if (note) {
                 velocityChanges.push({
-                    note,
+                    noteId: note.id,
+                    trackId: note.track,
                     oldVelocity: note.velocity,
                     newVelocity: velocity
                 });
@@ -1267,20 +1295,31 @@ class PianoRollEditor {
             type: 'changeVelocity',
             velocityChanges,
             undo: () => {
-                velocityChanges.forEach(({ note, oldVelocity }) => {
-                    note.velocity = oldVelocity;
+                velocityChanges.forEach(({ noteId, trackId, oldVelocity }) => {
+                    const track = this.tracks.find(t => t.id === trackId);
+                    if (!track) return;
+                    const n = track.notes.find(x => x.id === noteId);
+                    if (!n) return;
+                    n.velocity = oldVelocity;
                 });
                 this.render();
+                this.renderVelocity();
             },
             redo: () => {
-                velocityChanges.forEach(({ note, newVelocity }) => {
-                    note.velocity = newVelocity;
+                velocityChanges.forEach(({ noteId, trackId, newVelocity }) => {
+                    const track = this.tracks.find(t => t.id === trackId);
+                    if (!track) return;
+                    const n = track.notes.find(x => x.id === noteId);
+                    if (!n) return;
+                    n.velocity = newVelocity;
                 });
                 this.render();
+                this.renderVelocity();
             }
         });
         
         this.render();
+        this.renderVelocity();
     }
     
     copySelectedNotes() {
@@ -1341,7 +1380,8 @@ class PianoRollEditor {
             const note = this.findNoteById(noteId);
             if (note) {
                 deletedNotes.push({
-                    note,
+                    noteData: JSON.parse(JSON.stringify(note)),
+                    noteId: note.id,
                     trackId: note.track
                 });
                 const track = this.tracks.find(t => t.id === note.track);
@@ -1354,20 +1394,24 @@ class PianoRollEditor {
             type: 'deleteNotes',
             deletedNotes,
             undo: () => {
-                deletedNotes.forEach(({ note, trackId }) => {
+                deletedNotes.forEach(({ noteData, trackId }) => {
                     const track = this.tracks.find(t => t.id === trackId);
-                    track.notes.push(note);
+                    if (!track) return;
+                    track.notes.push(JSON.parse(JSON.stringify(noteData)));
                 });
                 this.render();
+                this.renderVelocity();
             },
             redo: () => {
-                deletedNotes.forEach(({ note, trackId }) => {
+                deletedNotes.forEach(({ noteId, trackId }) => {
                     const track = this.tracks.find(t => t.id === trackId);
-                    const idx = track.notes.findIndex(n => n.id === note.id);
+                    if (!track) return;
+                    const idx = track.notes.findIndex(n => n.id === noteId);
                     if (idx !== -1) track.notes.splice(idx, 1);
                 });
                 this.selectedNotes.clear();
                 this.render();
+                this.renderVelocity();
             }
         });
         
@@ -1751,17 +1795,22 @@ class PianoRollEditor {
             ]
         };
         
+        const channelData = JSON.parse(JSON.stringify(channel));
+        const trackId = track.id;
+        
         track.automationChannels.push(channel);
         track.activeChannelId = channel.id;
         this.activeChannelId = channel.id;
         
         this.executeCommand({
             type: 'addAutomationChannel',
-            channel,
-            trackId: track.id,
+            channelData,
+            channelId: channel.id,
+            trackId,
             undo: () => {
-                const t = this.tracks.find(tr => tr.id === track.id);
-                const idx = t.automationChannels.findIndex(c => c.id === channel.id);
+                const t = this.tracks.find(tr => tr.id === trackId);
+                if (!t) return;
+                const idx = t.automationChannels.findIndex(c => c.id === channelData.id);
                 if (idx !== -1) t.automationChannels.splice(idx, 1);
                 t.activeChannelId = t.automationChannels.length > 0 ? t.automationChannels[0].id : null;
                 this.activeChannelId = t.activeChannelId;
@@ -1770,10 +1819,11 @@ class PianoRollEditor {
                 this.resizeCanvas();
             },
             redo: () => {
-                const t = this.tracks.find(tr => tr.id === track.id);
-                t.automationChannels.push(channel);
-                t.activeChannelId = channel.id;
-                this.activeChannelId = channel.id;
+                const t = this.tracks.find(tr => tr.id === trackId);
+                if (!t) return;
+                t.automationChannels.push(JSON.parse(JSON.stringify(channelData)));
+                t.activeChannelId = channelData.id;
+                this.activeChannelId = channelData.id;
                 this.renderChannelSelect();
                 this.renderAutomation();
                 this.resizeCanvas();
@@ -1792,25 +1842,29 @@ class PianoRollEditor {
         
         const channelIndex = track.automationChannels.findIndex(c => c.id === channel.id);
         const channelCopy = JSON.parse(JSON.stringify(channel));
+        const trackId = track.id;
+        const channelId = channel.id;
         
         this.executeCommand({
             type: 'deleteAutomationChannel',
-            channel: channelCopy,
-            channelId: channel.id,
-            trackId: track.id,
+            channelCopy,
+            channelId,
+            trackId,
             channelIndex,
             undo: () => {
-                const t = this.tracks.find(tr => tr.id === track.id);
-                t.automationChannels.splice(channelIndex, 0, channelCopy);
-                t.activeChannelId = channelCopy.id;
-                this.activeChannelId = channelCopy.id;
+                const t = this.tracks.find(tr => tr.id === trackId);
+                if (!t) return;
+                t.automationChannels.splice(channelIndex, 0, JSON.parse(JSON.stringify(channelCopy)));
+                t.activeChannelId = channelId;
+                this.activeChannelId = channelId;
                 this.renderChannelSelect();
                 this.renderAutomation();
                 this.resizeCanvas();
             },
             redo: () => {
-                const t = this.tracks.find(tr => tr.id === track.id);
-                const idx = t.automationChannels.findIndex(c => c.id === channelCopy.id);
+                const t = this.tracks.find(tr => tr.id === trackId);
+                if (!t) return;
+                const idx = t.automationChannels.findIndex(c => c.id === channelId);
                 if (idx !== -1) t.automationChannels.splice(idx, 1);
                 t.activeChannelId = t.automationChannels.length > 0 ? t.automationChannels[0].id : null;
                 this.activeChannelId = t.activeChannelId;
@@ -2043,16 +2097,21 @@ class PianoRollEditor {
                 trackId: this.activeTrackId,
                 point: newPoint,
                 insertIndex,
+                tick,
                 undo: () => {
-                    const t = this.tracks.find(tr => tr.id === this.activeTrackId);
+                    const t = this.tracks.find(tr => tr.id === trackId);
+                    if (!t) return;
                     const ch = t.automationChannels.find(c => c.id === channel.id);
-                    const idx = ch.points.findIndex(p => p.tick === newPoint.tick && p.value === newPoint.value);
+                    if (!ch) return;
+                    const idx = ch.points.findIndex(p => p.tick === tick && p.value === newPoint.value);
                     if (idx !== -1) ch.points.splice(idx, 1);
                     this.renderAutomation();
                 },
                 redo: () => {
-                    const t = this.tracks.find(tr => tr.id === this.activeTrackId);
+                    const t = this.tracks.find(tr => tr.id === trackId);
+                    if (!t) return;
                     const ch = t.automationChannels.find(c => c.id === channel.id);
+                    if (!ch) return;
                     let idx = 0;
                     for (let i = 0; i < ch.points.length; i++) {
                         if (ch.points[i].tick < tick) idx = i + 1;
@@ -2102,26 +2161,43 @@ class PianoRollEditor {
             const oldValue = state.startValue;
             const newTick = state.point.tick;
             const newValue = state.point.value;
+            const pointTick = oldTick;
+            const pointValue = oldValue;
             
             this.executeCommand({
                 type: 'moveControlPoint',
                 channelId: channel.id,
                 trackId: this.activeTrackId,
-                pointId: state.point,
+                pointTick,
+                pointValue,
                 oldTick,
                 oldValue,
                 newTick,
                 newValue,
                 undo: () => {
-                    state.point.tick = oldTick;
-                    state.point.value = oldValue;
-                    channel.points.sort((a, b) => a.tick - b.tick);
+                    const t = this.tracks.find(tr => tr.id === this.activeTrackId);
+                    if (!t) return;
+                    const ch = t.automationChannels.find(c => c.id === channel.id);
+                    if (!ch) return;
+                    const pt = ch.points.find(p => p.tick === newTick && p.value === newValue);
+                    if (pt) {
+                        pt.tick = oldTick;
+                        pt.value = oldValue;
+                    }
+                    ch.points.sort((a, b) => a.tick - b.tick);
                     this.renderAutomation();
                 },
                 redo: () => {
-                    state.point.tick = newTick;
-                    state.point.value = newValue;
-                    channel.points.sort((a, b) => a.tick - b.tick);
+                    const t = this.tracks.find(tr => tr.id === this.activeTrackId);
+                    if (!t) return;
+                    const ch = t.automationChannels.find(c => c.id === channel.id);
+                    if (!ch) return;
+                    const pt = ch.points.find(p => p.tick === oldTick && p.value === oldValue);
+                    if (pt) {
+                        pt.tick = newTick;
+                        pt.value = newValue;
+                    }
+                    ch.points.sort((a, b) => a.tick - b.tick);
                     this.renderAutomation();
                 }
             });
@@ -2150,15 +2226,19 @@ class PianoRollEditor {
             point: pointCopy,
             index,
             undo: () => {
-                const t = this.tracks.find(tr => tr.id === this.activeTrackId);
+                const t = this.tracks.find(tr => tr.id === trackId);
+                if (!t) return;
                 const ch = t.automationChannels.find(c => c.id === channel.id);
-                ch.points.splice(index, 0, pointCopy);
+                if (!ch) return;
+                ch.points.splice(index, 0, { ...pointCopy });
                 ch.points.sort((a, b) => a.tick - b.tick);
                 this.renderAutomation();
             },
             redo: () => {
-                const t = this.tracks.find(tr => tr.id === this.activeTrackId);
+                const t = this.tracks.find(tr => tr.id === trackId);
+                if (!t) return;
                 const ch = t.automationChannels.find(c => c.id === channel.id);
+                if (!ch) return;
                 const idx = ch.points.findIndex(p => p.tick === pointCopy.tick && p.value === pointCopy.value);
                 if (idx !== -1) ch.points.splice(idx, 1);
                 this.renderAutomation();
@@ -2201,26 +2281,43 @@ class PianoRollEditor {
         
         const channel = this.getActiveChannel();
         const oldMode = this.contextMenuPoint.interpolation;
-        const point = this.contextMenuPoint;
+        const pointTick = this.contextMenuPoint.tick;
+        const pointValue = this.contextMenuPoint.value;
+        const trackId = this.activeTrackId;
+        const channelId = channel ? channel.id : null;
         
         this.executeCommand({
             type: 'changeInterpolation',
-            channelId: channel.id,
-            trackId: this.activeTrackId,
-            point,
+            channelId,
+            trackId,
+            pointTick,
+            pointValue,
             oldMode,
             newMode: mode,
             undo: () => {
-                point.interpolation = oldMode;
+                const t = this.tracks.find(tr => tr.id === trackId);
+                if (!t) return;
+                const ch = t.automationChannels.find(c => c.id === channelId);
+                if (!ch) return;
+                const pt = ch.points.find(p => p.tick === pointTick && p.value === pointValue);
+                if (pt) pt.interpolation = oldMode;
                 this.renderAutomation();
             },
             redo: () => {
-                point.interpolation = mode;
+                const t = this.tracks.find(tr => tr.id === trackId);
+                if (!t) return;
+                const ch = t.automationChannels.find(c => c.id === channelId);
+                if (!ch) return;
+                const pt = ch.points.find(p => p.tick === pointTick && p.value === pointValue);
+                if (pt) pt.interpolation = mode;
                 this.renderAutomation();
             }
         });
         
-        point.interpolation = mode;
+        if (channel) {
+            const pt = channel.points.find(p => p.tick === pointTick && p.value === pointValue);
+            if (pt) pt.interpolation = mode;
+        }
         this.renderAutomation();
         this.contextMenuPoint = null;
     }
@@ -2996,7 +3093,8 @@ class PianoRollEditor {
         
         if (this.velocityDragState.type === 'adjustVelocity') {
             const velocityChanges = this.velocityDragState.velocityChanges.map(vc => ({
-                note: vc.note,
+                noteId: vc.note.id,
+                trackId: vc.note.track,
                 oldVelocity: vc.oldVelocity,
                 newVelocity: vc.note.velocity
             })).filter(vc => vc.oldVelocity !== vc.newVelocity);
@@ -3006,15 +3104,23 @@ class PianoRollEditor {
                     type: 'changeVelocity',
                     velocityChanges,
                     undo: () => {
-                        velocityChanges.forEach(({ note, oldVelocity }) => {
-                            note.velocity = oldVelocity;
+                        velocityChanges.forEach(({ noteId, trackId, oldVelocity }) => {
+                            const track = this.tracks.find(t => t.id === trackId);
+                            if (!track) return;
+                            const n = track.notes.find(x => x.id === noteId);
+                            if (!n) return;
+                            n.velocity = oldVelocity;
                         });
                         this.render();
                         this.renderVelocity();
                     },
                     redo: () => {
-                        velocityChanges.forEach(({ note, newVelocity }) => {
-                            note.velocity = newVelocity;
+                        velocityChanges.forEach(({ noteId, trackId, newVelocity }) => {
+                            const track = this.tracks.find(t => t.id === trackId);
+                            if (!track) return;
+                            const n = track.notes.find(x => x.id === noteId);
+                            if (!n) return;
+                            n.velocity = newVelocity;
                         });
                         this.render();
                         this.renderVelocity();

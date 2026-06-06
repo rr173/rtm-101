@@ -181,6 +181,8 @@ class PianoRollEditor {
         this.velocityDragState = null;
         this.velocitySelectionBox = null;
         
+        this.snapEnabled = false;
+        
         this.pendingMidiFile = null;
         
         this.init();
@@ -449,6 +451,7 @@ class PianoRollEditor {
         
         document.getElementById('recordBtn').addEventListener('click', () => this.toggleRecording());
         document.getElementById('metronomeBtn').addEventListener('click', () => this.toggleMetronome());
+        document.getElementById('snapBtn').addEventListener('click', () => this.toggleSnap());
         document.getElementById('quantizeSelect').addEventListener('change', (e) => {
             this.quantizeUnit = parseInt(e.target.value) || 0;
         });
@@ -1027,14 +1030,14 @@ class PianoRollEditor {
         this.selectedNotes.clear();
         
         const pitch = this.pixelToPitch(pos.y);
-        const startTick = this.pixelToTick(pos.x);
+        const startTick = this.snapTick(this.pixelToTick(pos.x));
         
         if (pitch >= MIN_PITCH && pitch <= MAX_PITCH && startTick >= 0) {
             this.dragState = {
                 type: 'create',
                 pitch,
                 startTick,
-                durationTicks: 1
+                durationTicks: Math.max(1, this.getSnapUnit())
             };
         } else {
             this.dragState = {
@@ -1053,7 +1056,7 @@ class PianoRollEditor {
         const pos = this.getMousePosition(e);
         
         if (this.dragState.type === 'create') {
-            const currentTick = this.pixelToTick(pos.x);
+            const currentTick = this.snapTick(this.pixelToTick(pos.x));
             this.dragState.durationTicks = Math.max(1, currentTick - this.dragState.startTick + 1);
             this.render();
         } else if (this.dragState.type === 'move') {
@@ -1061,13 +1064,14 @@ class PianoRollEditor {
             const deltaPitch = this.pixelToPitch(this.dragState.startY) - this.pixelToPitch(pos.y);
             
             this.dragState.notePositions.forEach(({ note, startTick, startPitch }) => {
-                note.startTick = Math.max(0, startTick + deltaTick);
+                const newTick = this.snapTick(startTick + deltaTick);
+                note.startTick = Math.max(0, newTick);
                 note.pitch = Math.max(MIN_PITCH, Math.min(MAX_PITCH, startPitch + deltaPitch));
             });
             this.render();
         } else if (this.dragState.type === 'resize') {
-            const deltaTick = this.pixelToTick(pos.x) - this.pixelToTick(this.dragState.startX);
-            this.dragState.note.durationTicks = Math.max(1, this.dragState.startDuration + deltaTick);
+            const endTick = this.snapTick(this.pixelToTick(pos.x));
+            this.dragState.note.durationTicks = Math.max(1, endTick - this.dragState.note.startTick + 1);
             this.render();
         } else if (this.dragState.type === 'select') {
             this.selectionBox = {
@@ -1419,6 +1423,222 @@ class PianoRollEditor {
         this.render();
     }
     
+    splitSelectedNotes() {
+        if (this.selectedNotes.size === 0) return;
+        
+        let splitTick = this.playTick;
+        splitTick = this.snapTick(splitTick);
+        
+        const splits = [];
+        
+        this.selectedNotes.forEach(noteId => {
+            const note = this.findNoteById(noteId);
+            if (!note) return;
+            
+            const startTick = note.startTick;
+            const endTick = note.startTick + note.durationTicks;
+            
+            if (splitTick <= startTick || splitTick >= endTick) return;
+            
+            const track = this.tracks.find(t => t.id === note.track);
+            const idx = track.notes.findIndex(n => n.id === noteId);
+            if (idx === -1) return;
+            
+            const leftDuration = splitTick - startTick;
+            const rightDuration = endTick - splitTick;
+            
+            const rightNote = {
+                id: generateId(),
+                track: note.track,
+                pitch: note.pitch,
+                startTick: splitTick,
+                durationTicks: rightDuration,
+                velocity: note.velocity
+            };
+            
+            splits.push({
+                trackId: note.track,
+                originalNoteId: note.id,
+                originalNoteData: JSON.parse(JSON.stringify(note)),
+                originalIndex: idx,
+                leftDuration,
+                rightNote,
+                rightNoteData: JSON.parse(JSON.stringify(rightNote))
+            });
+        });
+        
+        if (splits.length === 0) return;
+        
+        splits.forEach(split => {
+            const track = this.tracks.find(t => t.id === split.trackId);
+            const note = track.notes.find(n => n.id === split.originalNoteId);
+            if (note) {
+                note.durationTicks = split.leftDuration;
+            }
+            track.notes.push(split.rightNote);
+        });
+        
+        this.executeCommand({
+            type: 'splitNotes',
+            splits,
+            undo: () => {
+                splits.forEach(split => {
+                    const track = this.tracks.find(t => t.id === split.trackId);
+                    if (!track) return;
+                    
+                    const rightIdx = track.notes.findIndex(n => n.id === split.rightNote.id);
+                    if (rightIdx !== -1) track.notes.splice(rightIdx, 1);
+                    
+                    const note = track.notes.find(n => n.id === split.originalNoteId);
+                    if (note) {
+                        note.durationTicks = split.originalNoteData.durationTicks;
+                    }
+                    
+                    this.selectedNotes.delete(split.rightNote.id);
+                });
+                this.selectedNotes.clear();
+                splits.forEach(split => this.selectedNotes.add(split.originalNoteId));
+                this.render();
+                this.renderVelocity();
+            },
+            redo: () => {
+                splits.forEach(split => {
+                    const track = this.tracks.find(t => t.id === split.trackId);
+                    if (!track) return;
+                    
+                    const note = track.notes.find(n => n.id === split.originalNoteId);
+                    if (note) {
+                        note.durationTicks = split.leftDuration;
+                    }
+                    
+                    track.notes.push(JSON.parse(JSON.stringify(split.rightNoteData)));
+                });
+                this.selectedNotes.clear();
+                splits.forEach(split => {
+                    this.selectedNotes.add(split.originalNoteId);
+                    this.selectedNotes.add(split.rightNote.id);
+                });
+                this.render();
+                this.renderVelocity();
+            }
+        });
+        
+        this.selectedNotes.clear();
+        splits.forEach(split => {
+            this.selectedNotes.add(split.originalNoteId);
+            this.selectedNotes.add(split.rightNote.id);
+        });
+        this.render();
+        this.renderVelocity();
+    }
+    
+    mergeSelectedNotes() {
+        if (this.selectedNotes.size < 2) return;
+        
+        const activeTrack = this.getActiveTrack();
+        if (!activeTrack) return;
+        
+        const selectedNoteObjs = [];
+        this.selectedNotes.forEach(noteId => {
+            const note = this.findNoteById(noteId);
+            if (note && note.track === activeTrack.id) {
+                selectedNoteObjs.push(note);
+            }
+        });
+        
+        if (selectedNoteObjs.length < 2) return;
+        
+        const pitch = selectedNoteObjs[0].pitch;
+        const allSamePitch = selectedNoteObjs.every(n => n.pitch === pitch);
+        if (!allSamePitch) return;
+        
+        selectedNoteObjs.sort((a, b) => a.startTick - b.startTick);
+        
+        let canMerge = true;
+        for (let i = 0; i < selectedNoteObjs.length - 1; i++) {
+            const curr = selectedNoteObjs[i];
+            const next = selectedNoteObjs[i + 1];
+            if (curr.startTick + curr.durationTicks !== next.startTick) {
+                canMerge = false;
+                break;
+            }
+        }
+        if (!canMerge) return;
+        
+        const earliestStart = selectedNoteObjs[0].startTick;
+        const latestEnd = selectedNoteObjs[selectedNoteObjs.length - 1].startTick + 
+                        selectedNoteObjs[selectedNoteObjs.length - 1].durationTicks;
+        const totalVelocity = selectedNoteObjs.reduce((sum, n) => sum + n.velocity, 0);
+        const avgVelocity = Math.round(totalVelocity / selectedNoteObjs.length);
+        
+        const mergedNote = {
+            id: generateId(),
+            track: activeTrack.id,
+            pitch,
+            startTick: earliestStart,
+            durationTicks: latestEnd - earliestStart,
+            velocity: avgVelocity
+        };
+        
+        const mergedData = {
+            trackId: activeTrack.id,
+            mergedNote,
+            mergedNoteData: JSON.parse(JSON.stringify(mergedNote)),
+            originalNotes: selectedNoteObjs.map(n => ({
+                noteData: JSON.parse(JSON.stringify(n)),
+                noteId: n.id
+            }))
+        };
+        
+        mergedData.originalNotes.forEach(({ noteId }) => {
+            const idx = activeTrack.notes.findIndex(n => n.id === noteId);
+            if (idx !== -1) activeTrack.notes.splice(idx, 1);
+        });
+        activeTrack.notes.push(mergedNote);
+        
+        this.executeCommand({
+            type: 'mergeNotes',
+            mergedData,
+            undo: () => {
+                const track = this.tracks.find(t => t.id === mergedData.trackId);
+                if (!track) return;
+                
+                const mergedIdx = track.notes.findIndex(n => n.id === mergedData.mergedNote.id);
+                if (mergedIdx !== -1) track.notes.splice(mergedIdx, 1);
+                
+                mergedData.originalNotes.forEach(({ noteData }) => {
+                    track.notes.push(JSON.parse(JSON.stringify(noteData)));
+                });
+                
+                this.selectedNotes.clear();
+                mergedData.originalNotes.forEach(({ noteId }) => this.selectedNotes.add(noteId));
+                this.render();
+                this.renderVelocity();
+            },
+            redo: () => {
+                const track = this.tracks.find(t => t.id === mergedData.trackId);
+                if (!track) return;
+                
+                mergedData.originalNotes.forEach(({ noteId }) => {
+                    const idx = track.notes.findIndex(n => n.id === noteId);
+                    if (idx !== -1) track.notes.splice(idx, 1);
+                });
+                
+                track.notes.push(JSON.parse(JSON.stringify(mergedData.mergedNoteData)));
+                
+                this.selectedNotes.clear();
+                this.selectedNotes.add(mergedData.mergedNote.id);
+                this.render();
+                this.renderVelocity();
+            }
+        });
+        
+        this.selectedNotes.clear();
+        this.selectedNotes.add(mergedNote.id);
+        this.render();
+        this.renderVelocity();
+    }
+    
     onWheel(e) {
         e.preventDefault();
         
@@ -1502,6 +1722,12 @@ class PianoRollEditor {
         } else if (e.key === 'Escape') {
             this.selectedNotes.clear();
             this.render();
+        } else if (!this.isRecording && e.key.toLowerCase() === 's' && !e.ctrlKey && !e.metaKey) {
+            e.preventDefault();
+            this.splitSelectedNotes();
+        } else if (!this.isRecording && e.key.toLowerCase() === 'j' && !e.ctrlKey && !e.metaKey) {
+            e.preventDefault();
+            this.mergeSelectedNotes();
         }
     }
     
@@ -1589,6 +1815,33 @@ class PianoRollEditor {
     quantizeTick(tick) {
         if (this.quantizeUnit <= 0) return tick;
         return Math.round(tick / this.quantizeUnit) * this.quantizeUnit;
+    }
+    
+    getSnapUnit() {
+        if (this.cellWidth >= 80) return 2;
+        if (this.cellWidth >= 40) return 1;
+        if (this.cellWidth >= 20) return 1;
+        if (this.cellWidth >= 10) return 2;
+        return 4;
+    }
+    
+    snapTick(tick) {
+        if (!this.snapEnabled) return tick;
+        const unit = this.getSnapUnit();
+        return Math.round(tick / unit) * unit;
+    }
+    
+    toggleSnap() {
+        this.snapEnabled = !this.snapEnabled;
+        const btn = document.getElementById('snapBtn');
+        const stateLabel = btn.querySelector('.snap-state');
+        if (this.snapEnabled) {
+            btn.classList.add('active');
+            stateLabel.textContent = 'On';
+        } else {
+            btn.classList.remove('active');
+            stateLabel.textContent = 'Off';
+        }
     }
     
     startRecordingNote(pitch) {

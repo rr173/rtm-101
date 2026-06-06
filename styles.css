@@ -126,6 +126,31 @@ body {
     font-size: 12px;
 }
 
+.snap-control {
+    margin-left: 16px;
+}
+
+.snap-btn {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 6px 10px;
+}
+
+.snap-btn.active {
+    background-color: #6bcb77;
+    border-color: #6bcb77;
+    color: #fff;
+}
+
+.snap-icon {
+    font-size: 14px;
+}
+
+.snap-state {
+    font-size: 12px;
+}
+
 .record-btn {
     color: #ff6b6b;
 }

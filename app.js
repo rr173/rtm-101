@@ -67,6 +67,87 @@ const INTERPOLATION_MODES = {
     sCurve: 'S-Curve'
 };
 
+const CHORD_TYPES = [
+    { name: '', intervals: [0, 4, 7], priority: 100 },
+    { name: 'm', intervals: [0, 3, 7], priority: 90 },
+    { name: '7', intervals: [0, 4, 7, 10], priority: 80 },
+    { name: 'm7', intervals: [0, 3, 7, 10], priority: 70 },
+    { name: 'dim', intervals: [0, 3, 6], priority: 60 },
+    { name: 'aug', intervals: [0, 4, 8], priority: 50 },
+    { name: 'maj7', intervals: [0, 4, 7, 11], priority: 40 },
+    { name: 'dim7', intervals: [0, 3, 6, 9], priority: 30 },
+    { name: 'sus4', intervals: [0, 5, 7], priority: 20 },
+    { name: '6', intervals: [0, 4, 7, 9], priority: 10 }
+];
+
+function normalizePitchClass(pitches) {
+    const set = new Set();
+    pitches.forEach(p => set.add(p % 12));
+    return Array.from(set).sort((a, b) => a - b);
+}
+
+function detectChord(pitches) {
+    if (pitches.length < 3) return null;
+
+    const sortedPitches = [...pitches].sort((a, b) => a - b);
+    const bassPitch = sortedPitches[0];
+    const bassNote = bassPitch % 12;
+
+    const pitchClasses = normalizePitchClass(sortedPitches);
+    if (pitchClasses.length < 3) return null;
+
+    let bestMatch = null;
+    let bestScore = -1;
+
+    for (let rootIdx = 0; rootIdx < pitchClasses.length; rootIdx++) {
+        const root = pitchClasses[rootIdx];
+        const intervals = pitchClasses
+            .map(p => (p - root + 12) % 12)
+            .filter(i => i !== 0)
+            .sort((a, b) => a - b);
+        const intervalsWithRoot = [0, ...intervals];
+        const isInversion = root !== bassNote;
+
+        for (const chordType of CHORD_TYPES) {
+            if (intervalsWithRoot.length < chordType.intervals.length) continue;
+
+            let matchCount = 0;
+            for (const interval of chordType.intervals) {
+                if (intervalsWithRoot.includes(interval)) {
+                    matchCount++;
+                }
+            }
+
+            const matchRatio = matchCount / chordType.intervals.length;
+            const extraNotes = intervalsWithRoot.length - chordType.intervals.length;
+            const exactMatch = matchCount === chordType.intervals.length && extraNotes === 0;
+
+            let score = matchRatio * 10000 + chordType.intervals.length * 100 + chordType.priority - extraNotes * 50;
+            if (exactMatch) score += 5000;
+            if (!isInversion) score += 500;
+
+            if (matchRatio >= 0.99 && score > bestScore) {
+                bestScore = score;
+                const bassNoteName = NOTE_NAMES[bassNote];
+                bestMatch = {
+                    root,
+                    name: NOTE_NAMES[root] + chordType.name,
+                    fullName: isInversion ? NOTE_NAMES[root] + chordType.name + '/' + bassNoteName : NOTE_NAMES[root] + chordType.name,
+                    type: chordType.name,
+                    isInversion,
+                    bassNote,
+                    matchingPitches: sortedPitches.filter(p => {
+                        const interval = (p % 12 - root + 12) % 12;
+                        return chordType.intervals.includes(interval);
+                    })
+                };
+            }
+        }
+    }
+
+    return bestMatch;
+}
+
 function isBlackKey(pitch) {
     const note = pitch % 12;
     return [1, 3, 6, 8, 10].includes(note);
@@ -186,6 +267,12 @@ class PianoRollEditor {
         this.pendingMidiFile = null;
         
         this.dialogOpen = false;
+
+        this.chordTrackCanvas = null;
+        this.chordTrackCtx = null;
+        this.chordTrackContainer = null;
+        this.highlightedChordBeat = null;
+        this.highlightedNoteIds = new Set();
         
         this.init();
     }
@@ -208,6 +295,10 @@ class PianoRollEditor {
         this.velocityCanvas = document.getElementById('velocityCanvas');
         this.velocityCtx = this.velocityCanvas.getContext('2d');
         this.velocityCanvasContainer = document.getElementById('velocityCanvasContainer');
+
+        this.chordTrackCanvas = document.getElementById('chordTrackCanvas');
+        this.chordTrackCtx = this.chordTrackCanvas.getContext('2d');
+        this.chordTrackContainer = document.getElementById('chordTrackContainer');
         
         this.createInitialTracks();
         this.loadDemoMelody();
@@ -230,6 +321,8 @@ class PianoRollEditor {
         setTimeout(() => {
             this.resizeVelocityCanvas();
             this.renderVelocity();
+            this.resizeChordTrackCanvas();
+            this.renderChordTrack();
         }, 100);
     }
     
@@ -409,6 +502,7 @@ class PianoRollEditor {
             this.scrollY = this.gridContainer.scrollTop;
             this.rulerContainer.scrollLeft = this.scrollX;
             this.automationCanvasContainer.scrollLeft = this.scrollX;
+            this.chordTrackContainer.scrollLeft = this.scrollX;
             if (this.velocityCanvasContainer) {
                 this.velocityCanvasContainer.scrollLeft = this.scrollX;
             }
@@ -421,6 +515,7 @@ class PianoRollEditor {
             this.scrollX = this.automationCanvasContainer.scrollLeft;
             this.gridContainer.scrollLeft = this.scrollX;
             this.rulerContainer.scrollLeft = this.scrollX;
+            this.chordTrackContainer.scrollLeft = this.scrollX;
             if (this.velocityCanvasContainer) {
                 this.velocityCanvasContainer.scrollLeft = this.scrollX;
             }
@@ -578,7 +673,12 @@ class PianoRollEditor {
             this.gridContainer.scrollLeft = this.scrollX;
             this.rulerContainer.scrollLeft = this.scrollX;
             this.automationCanvasContainer.scrollLeft = this.scrollX;
+            this.chordTrackContainer.scrollLeft = this.scrollX;
         });
+
+        this.chordTrackCanvas.addEventListener('click', (e) => this.onChordTrackClick(e));
+
+        document.getElementById('exportChordBtn').addEventListener('click', () => this.exportChordProgression());
         
         this.velocityCanvas.addEventListener('wheel', (e) => this.onWheel(e), { passive: false });
 
@@ -1076,11 +1176,13 @@ class PianoRollEditor {
         this.automationCanvas.height = Math.max(automationRect.height, 120);
         
         this.resizeVelocityCanvas();
+        this.resizeChordTrackCanvas();
         
         this.render();
         this.renderRuler();
         this.renderAutomation();
         this.renderVelocity();
+        this.renderChordTrack();
     }
     
     resizeVelocityCanvas() {
@@ -1098,6 +1200,181 @@ class PianoRollEditor {
         const minWidth = maxTick * this.cellWidth + 200;
         this.velocityCanvas.width = Math.max(velocityRect.width, minWidth, 3000);
         this.velocityCanvas.height = Math.max(velocityRect.height, 200);
+    }
+
+    resizeChordTrackCanvas() {
+        if (!this.chordTrackContainer) return;
+
+        let maxTick = 64;
+        this.tracks.forEach(track => {
+            track.notes.forEach(note => {
+                const end = note.startTick + note.durationTicks;
+                if (end > maxTick) maxTick = end;
+            });
+        });
+
+        const minWidth = maxTick * this.cellWidth + 200;
+        this.chordTrackCanvas.width = Math.max(this.chordTrackContainer.clientWidth, minWidth, 3000);
+        this.chordTrackCanvas.height = 30;
+    }
+
+    getPitchesAtBeat(beatTick) {
+        const pitches = [];
+        const notes = [];
+        this.tracks.forEach(track => {
+            track.notes.forEach(note => {
+                if (note.startTick <= beatTick && note.startTick + note.durationTicks > beatTick) {
+                    pitches.push(note.pitch);
+                    notes.push(note);
+                }
+            });
+        });
+        return { pitches, notes };
+    }
+
+    analyzeAllChords() {
+        const results = new Map();
+        let maxTick = 0;
+        this.tracks.forEach(track => {
+            track.notes.forEach(note => {
+                const end = note.startTick + note.durationTicks;
+                if (end > maxTick) maxTick = end;
+            });
+        });
+
+        for (let tick = 0; tick <= maxTick; tick += TICKS_PER_BEAT) {
+            const { pitches, notes } = this.getPitchesAtBeat(tick);
+            const chord = detectChord(pitches);
+            results.set(tick, { chord, notes, pitches });
+        }
+        return results;
+    }
+
+    renderChordTrack() {
+        if (!this.chordTrackCtx || !this.chordTrackCanvas) return;
+        const ctx = this.chordTrackCtx;
+        const width = this.chordTrackCanvas.width;
+        const height = this.chordTrackCanvas.height;
+        if (width === 0 || height === 0) return;
+
+        ctx.fillStyle = '#2d2d2d';
+        ctx.fillRect(0, 0, width, height);
+
+        const totalTicks = Math.ceil(width / this.cellWidth);
+        for (let tick = 0; tick <= totalTicks; tick += TICKS_PER_BEAT) {
+            const x = tick * this.cellWidth;
+            const isBar = tick % TICKS_PER_BAR === 0;
+
+            ctx.strokeStyle = isBar ? '#555' : '#3d3d3d';
+            ctx.lineWidth = isBar ? 2 : 1;
+            ctx.beginPath();
+            ctx.moveTo(x, 0);
+            ctx.lineTo(x, height);
+            ctx.stroke();
+        }
+
+        const chordData = this.analyzeAllChords();
+        this.chordData = chordData;
+
+        chordData.forEach((data, beatTick) => {
+            const x = beatTick * this.cellWidth;
+            const cellW = TICKS_PER_BEAT * this.cellWidth;
+            const isHighlighted = this.highlightedChordBeat === beatTick;
+
+            if (isHighlighted) {
+                ctx.fillStyle = 'rgba(74, 158, 255, 0.3)';
+                ctx.fillRect(x, 0, cellW, height);
+            }
+
+            let label = '?';
+            let textColor = '#888';
+            if (data.chord) {
+                label = data.chord.fullName;
+                textColor = data.chord.isInversion ? '#ffd93d' : '#6bcb77';
+            }
+
+            if (isHighlighted) {
+                textColor = '#fff';
+            }
+
+            ctx.fillStyle = textColor;
+            ctx.font = 'bold 12px -apple-system, BlinkMacSystemFont, sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+
+            const textWidth = ctx.measureText(label).width;
+            const maxWidth = cellW - 8;
+            if (textWidth > maxWidth) {
+                const fontSize = Math.max(8, 12 * (maxWidth / textWidth));
+                ctx.font = `bold ${fontSize}px -apple-system, BlinkMacSystemFont, sans-serif`;
+            }
+
+            ctx.fillText(label, x + cellW / 2, height / 2);
+        });
+
+        if (this.isPlaying || this.isPaused) {
+            const playX = this.playTick * this.cellWidth;
+            ctx.strokeStyle = '#ff4444';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(playX, 0);
+            ctx.lineTo(playX, height);
+            ctx.stroke();
+        }
+    }
+
+    onChordTrackClick(e) {
+        const rect = this.chordTrackCanvas.getBoundingClientRect();
+        const x = e.clientX - rect.left + this.chordTrackContainer.scrollLeft;
+        const beatTick = Math.floor(x / (this.cellWidth * TICKS_PER_BEAT)) * TICKS_PER_BEAT;
+
+        if (this.highlightedChordBeat === beatTick) {
+            this.highlightedChordBeat = null;
+            this.highlightedNoteIds = new Set();
+        } else {
+            this.highlightedChordBeat = beatTick;
+            this.highlightedNoteIds = new Set();
+            const data = this.chordData ? this.chordData.get(beatTick) : null;
+            if (data && data.notes) {
+                data.notes.forEach(note => this.highlightedNoteIds.add(note.id));
+            }
+        }
+
+        this.renderChordTrack();
+        this.render();
+    }
+
+    exportChordProgression() {
+        let maxTick = 0;
+        this.tracks.forEach(track => {
+            track.notes.forEach(note => {
+                const end = note.startTick + note.durationTicks;
+                if (end > maxTick) maxTick = end;
+            });
+        });
+
+        const totalBars = Math.ceil(maxTick / TICKS_PER_BAR);
+        const lines = [];
+
+        for (let bar = 0; bar < totalBars; bar++) {
+            const barChords = [];
+            for (let beat = 0; beat < BEATS_PER_BAR; beat++) {
+                const tick = bar * TICKS_PER_BAR + beat * TICKS_PER_BEAT;
+                const { pitches } = this.getPitchesAtBeat(tick);
+                const chord = detectChord(pitches);
+                barChords.push(chord ? chord.fullName : '?');
+            }
+            lines.push(`Bar ${bar + 1}: ${barChords.join(' ')}`);
+        }
+
+        const text = lines.join('\n');
+        const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'chord-progression.txt';
+        a.click();
+        URL.revokeObjectURL(url);
     }
     
     render() {
@@ -1231,6 +1508,7 @@ class PianoRollEditor {
         }
         
         this.renderAutomation();
+        this.renderChordTrack();
     }
     
     renderNote(note, color, isActive) {
@@ -1239,6 +1517,7 @@ class PianoRollEditor {
         const w = note.durationTicks * this.cellWidth;
         const h = this.cellHeight;
         
+        const isHighlighted = this.highlightedNoteIds.has(note.id);
         const alpha = isActive ? 1 : 0.4;
         const brightness = 0.4 + (note.velocity / 127) * 0.6;
         const noteColor = this.adjustColorBrightness(color, brightness);
@@ -1247,6 +1526,14 @@ class PianoRollEditor {
         this.ctx.fillStyle = noteColor;
         this.drawRoundRect(x + 2, y + 2, w - 4, h - 4, 3);
         this.ctx.fill();
+
+        if (isHighlighted) {
+            this.ctx.strokeStyle = '#fff';
+            this.ctx.lineWidth = 3;
+            this.drawRoundRect(x + 1, y + 1, w - 2, h - 2, 4);
+            this.ctx.stroke();
+            this.ctx.lineWidth = 1;
+        }
         
         if (isActive && w > 30) {
             this.ctx.fillStyle = '#fff';
@@ -2152,6 +2439,7 @@ class PianoRollEditor {
         } else {
             this.gridContainer.scrollLeft += e.deltaY;
             this.automationCanvasContainer.scrollLeft += e.deltaY;
+            this.chordTrackContainer.scrollLeft += e.deltaY;
         }
     }
     

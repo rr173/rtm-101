@@ -64,15 +64,20 @@
             <div class="toolbar-right">
                 <button id="importMidiBtn" class="toolbar-btn">Import MIDI</button>
                 <button id="exportMidiBtn" class="toolbar-btn">Export MIDI</button>
+                <button id="exportChordBtn" class="toolbar-btn">导出和弦谱</button>
             </div>
         </div>
 
         <div class="main-content">
             <div class="piano-roll-container">
                 <div class="top-spacer"></div>
+                <div class="chord-label-spacer">Chords</div>
                 <div class="piano-keyboard" id="pianoKeyboard"></div>
                 <div class="ruler-container" id="rulerContainer">
                     <canvas id="rulerCanvas"></canvas>
+                </div>
+                <div class="chord-track-container" id="chordTrackContainer">
+                    <canvas id="chordTrackCanvas"></canvas>
                 </div>
                 <div class="grid-area">
                     <div class="grid-main-area">

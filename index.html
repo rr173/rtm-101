@@ -113,12 +113,23 @@
             </div>
         </div>
 
-        <div class="track-panel">
-            <div class="track-header">
-                <span>Tracks</span>
-                <button id="addTrackBtn" class="track-btn">+</button>
+        <div class="bottom-panel">
+            <div class="track-panel">
+                <div class="track-header">
+                    <span>Tracks</span>
+                    <button id="addTrackBtn" class="track-btn">+</button>
+                </div>
+                <div id="trackList" class="track-list"></div>
             </div>
-            <div id="trackList" class="track-list"></div>
+            <div class="mixer-panel" id="mixerPanel">
+                <div class="mixer-header">
+                    <button id="mixerToggleBtn" class="mixer-toggle-btn" title="Toggle Mixer">
+                        <span class="btn-arrow">▸</span> Mixer
+                    </button>
+                    <div class="mixer-resizer" id="mixerResizer"></div>
+                </div>
+                <div class="mixer-channels" id="mixerChannels"></div>
+            </div>
         </div>
     </div>
 

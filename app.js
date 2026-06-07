@@ -273,6 +273,15 @@ class PianoRollEditor {
         this.chordTrackContainer = null;
         this.highlightedChordBeat = null;
         this.highlightedNoteIds = new Set();
+
+        this.mixerCollapsed = false;
+        this.mixerWidth = 0;
+        this.mixerPeaks = new Map();
+        this.mixerFaderDragState = null;
+        this.mixerPanDragState = null;
+        this.mixerResizeState = null;
+
+        this.trackPeakHold = new Map();
         
         this.init();
     }
@@ -299,6 +308,13 @@ class PianoRollEditor {
         this.chordTrackCanvas = document.getElementById('chordTrackCanvas');
         this.chordTrackCtx = this.chordTrackCanvas.getContext('2d');
         this.chordTrackContainer = document.getElementById('chordTrackContainer');
+
+        this.mixerPanel = document.getElementById('mixerPanel');
+        this.mixerChannels = document.getElementById('mixerChannels');
+        this.mixerToggleBtn = document.getElementById('mixerToggleBtn');
+        this.mixerResizer = document.getElementById('mixerResizer');
+
+        this.loadMixerState();
         
         this.createInitialTracks();
         this.loadDemoMelody();
@@ -323,6 +339,7 @@ class PianoRollEditor {
             this.renderVelocity();
             this.resizeChordTrackCanvas();
             this.renderChordTrack();
+            this.renderMixer();
         }, 100);
     }
     
@@ -339,7 +356,7 @@ class PianoRollEditor {
             id: generateId(),
             name: name || `Track ${this.tracks.length + 1}`,
             color: color || TRACK_COLORS[this.tracks.length % TRACK_COLORS.length],
-            volume: 80,
+            volume: 102,
             muted: false,
             solo: false,
             notes: [],
@@ -758,6 +775,40 @@ class PianoRollEditor {
 
         document.getElementById('timeShiftCancel').addEventListener('click', () => {
             this.hideTimeShiftDialog();
+        });
+
+        this.mixerToggleBtn.addEventListener('click', () => {
+            this.toggleMixer();
+        });
+
+        this.mixerResizer.addEventListener('mousedown', (e) => {
+            this.startMixerResize(e);
+        });
+
+        document.addEventListener('mousemove', (e) => {
+            if (this.mixerFaderDragState) {
+                this.onMixerFaderDrag(e);
+            }
+            if (this.mixerPanDragState) {
+                this.onMixerPanDrag(e);
+            }
+            if (this.mixerResizeState) {
+                this.onMixerResize(e);
+            }
+        });
+
+        document.addEventListener('mouseup', () => {
+            if (this.mixerFaderDragState) {
+                this.mixerFaderDragState = null;
+            }
+            if (this.mixerPanDragState) {
+                this.mixerPanDragState = null;
+            }
+            if (this.mixerResizeState) {
+                this.mixerResizeState = null;
+                this.mixerResizer.classList.remove('dragging');
+                this.saveMixerState();
+            }
         });
     }
 
@@ -1636,8 +1687,8 @@ class PianoRollEditor {
                     <button class="track-delete" data-track-id="${track.id}">×</button>
                 </div>
                 <div class="track-controls">
-                    <input type="range" class="track-volume" min="0" max="100" value="${track.volume}" data-track-id="${track.id}">
-                    <span class="track-volume-label">${track.volume}%</span>
+                    <input type="range" class="track-volume" min="0" max="127" value="${track.volume}" data-track-id="${track.id}">
+                    <span class="track-volume-label">${track.volume}</span>
                 </div>
                 <div class="track-buttons">
                     <button class="track-mute ${track.muted ? 'active' : ''}" data-track-id="${track.id}">M</button>
@@ -1668,23 +1719,29 @@ class PianoRollEditor {
             
             item.querySelector('.track-volume').addEventListener('input', (e) => {
                 track.volume = parseInt(e.target.value);
-                item.querySelector('.track-volume-label').textContent = `${track.volume}%`;
+                item.querySelector('.track-volume-label').textContent = `${track.volume}`;
+                this.updateAutomationPointIfExists(track, 'volume', track.volume);
+                this.renderMixer();
             });
             
             item.querySelector('.track-mute').addEventListener('click', (e) => {
                 e.stopPropagation();
                 track.muted = !track.muted;
                 this.renderTrackList();
+                this.renderMixer();
             });
             
             item.querySelector('.track-solo').addEventListener('click', (e) => {
                 e.stopPropagation();
                 track.solo = !track.solo;
                 this.renderTrackList();
+                this.renderMixer();
             });
             
             trackList.appendChild(item);
         });
+
+        this.renderMixer();
     }
     
     getMousePosition(e) {
@@ -3497,7 +3554,7 @@ class PianoRollEditor {
         const velocityGain = velocity / 127;
         let trackVolume = 1;
         if (track) {
-            trackVolume = track.volume / 100;
+            trackVolume = track.volume / 127;
         }
         
         const attack = 0.01;
@@ -3668,6 +3725,7 @@ class PianoRollEditor {
             }
             
             this.render();
+            this.updateMixerMeters(activeNotes);
             this.animationFrameId = requestAnimationFrame(animate);
         };
         
@@ -3714,6 +3772,7 @@ class PianoRollEditor {
             key.classList.remove('active');
         });
         
+        this.resetMixerMeters();
         this.render();
     }
     
@@ -4196,6 +4255,354 @@ class PianoRollEditor {
         this.velocitySelectionBox = null;
         this.render();
         this.renderVelocity();
+    }
+
+    loadMixerState() {
+        try {
+            const saved = localStorage.getItem('midiEditor_mixerState');
+            if (saved) {
+                const state = JSON.parse(saved);
+                this.mixerCollapsed = state.collapsed === true;
+                this.mixerWidth = state.width || 0;
+            }
+        } catch (e) {
+            console.warn('Failed to load mixer state', e);
+        }
+    }
+
+    saveMixerState() {
+        try {
+            const state = {
+                collapsed: this.mixerCollapsed,
+                width: this.mixerWidth
+            };
+            localStorage.setItem('midiEditor_mixerState', JSON.stringify(state));
+        } catch (e) {
+            console.warn('Failed to save mixer state', e);
+        }
+    }
+
+    applyMixerState() {
+        if (this.mixerCollapsed) {
+            this.mixerPanel.classList.add('collapsed');
+        } else {
+            this.mixerPanel.classList.remove('collapsed');
+        }
+        if (this.mixerWidth > 0 && !this.mixerCollapsed) {
+            this.mixerPanel.style.flex = `0 0 ${this.mixerWidth}px`;
+        }
+    }
+
+    toggleMixer() {
+        this.mixerCollapsed = !this.mixerCollapsed;
+        if (this.mixerCollapsed) {
+            this.mixerPanel.classList.add('collapsed');
+        } else {
+            this.mixerPanel.classList.remove('collapsed');
+            if (this.mixerWidth > 0) {
+                this.mixerPanel.style.flex = `0 0 ${this.mixerWidth}px`;
+            } else {
+                this.mixerPanel.style.flex = '';
+            }
+        }
+        this.saveMixerState();
+    }
+
+    startMixerResize(e) {
+        if (this.mixerCollapsed) return;
+        e.preventDefault();
+        this.mixerResizeState = {
+            startX: e.clientX,
+            startWidth: this.mixerPanel.getBoundingClientRect().width
+        };
+        this.mixerResizer.classList.add('dragging');
+    }
+
+    onMixerResize(e) {
+        if (!this.mixerResizeState) return;
+        const dx = e.clientX - this.mixerResizeState.startX;
+        const bottomPanelWidth = document.querySelector('.bottom-panel').getBoundingClientRect().width;
+        const trackPanelWidth = document.querySelector('.track-panel').getBoundingClientRect().width;
+        const maxWidth = bottomPanelWidth - trackPanelWidth - 50;
+        let newWidth = this.mixerResizeState.startWidth - dx;
+        newWidth = Math.max(300, Math.min(maxWidth, newWidth));
+        this.mixerWidth = newWidth;
+        this.mixerPanel.style.flex = `0 0 ${newWidth}px`;
+    }
+
+    panToDisplayValue(pan0To127) {
+        const centered = pan0To127 - 64;
+        if (centered === 0) return 'C';
+        if (centered < 0) return `L${Math.abs(centered)}`;
+        return `R${centered}`;
+    }
+
+    getTrackPanValue(track) {
+        const panChannel = track.automationChannels.find(c => c.type === 'pan');
+        if (panChannel && panChannel.points.length > 0) {
+            return getAutomationValueAtTime(panChannel, this.playTick);
+        }
+        return AUTOMATION_TYPES.pan.default;
+    }
+
+    getTrackVolumeValue(track) {
+        const volChannel = track.automationChannels.find(c => c.type === 'volume');
+        if (volChannel && volChannel.points.length > 0) {
+            return getAutomationValueAtTime(volChannel, this.playTick);
+        }
+        return track.volume;
+    }
+
+    findAutomationPointAtCurrentTick(channel, tick) {
+        if (!channel || !channel.points || channel.points.length === 0) return null;
+        const tolerance = TICKS_PER_BEAT / 4;
+        for (const point of channel.points) {
+            if (Math.abs(point.tick - tick) <= tolerance) {
+                return point;
+            }
+        }
+        return null;
+    }
+
+    updateAutomationPointIfExists(track, type, value) {
+        if (!this.isPlaying && !this.isPaused) return;
+        const channel = track.automationChannels.find(c => c.type === type);
+        if (!channel) return;
+        const point = this.findAutomationPointAtCurrentTick(channel, this.playTick);
+        if (point) {
+            point.value = Math.max(AUTOMATION_TYPES[type].min,
+                Math.min(AUTOMATION_TYPES[type].max, value));
+            this.renderAutomation();
+        }
+    }
+
+    setTrackPan(track, value) {
+        value = Math.max(0, Math.min(127, value));
+        let panChannel = track.automationChannels.find(c => c.type === 'pan');
+        if (!panChannel) {
+            const newChannel = {
+                id: generateId(),
+                type: 'pan',
+                points: [
+                    { tick: 0, value: value, interpolation: 'linear' }
+                ]
+            };
+            track.automationChannels.push(newChannel);
+            if (!track.activeChannelId) {
+                track.activeChannelId = newChannel.id;
+                this.activeChannelId = newChannel.id;
+            }
+            this.renderChannelSelect();
+        }
+        this.updateAutomationPointIfExists(track, 'pan', value);
+        if (!this.isPlaying && !this.isPaused && panChannel && panChannel.points.length > 0) {
+            panChannel.points[0].value = value;
+        }
+        if (!this.isPlaying && !this.isPaused && !panChannel) {
+        }
+        this.renderMixer();
+        this.renderAutomation();
+    }
+
+    setTrackVolume(track, value) {
+        value = Math.max(0, Math.min(127, value));
+        track.volume = value;
+        this.updateAutomationPointIfExists(track, 'volume', value);
+        this.renderTrackList();
+    }
+
+    renderMixer() {
+        if (!this.mixerChannels) return;
+        this.applyMixerState();
+
+        this.mixerChannels.innerHTML = '';
+        this.tracks.forEach((track, index) => {
+            const channelEl = document.createElement('div');
+            channelEl.className = `mixer-channel ${track.id === this.activeTrackId ? 'active' : ''}`;
+            channelEl.dataset.trackId = track.id;
+
+            const volumeValue = this.getTrackVolumeValue(track);
+            const panValue = this.getTrackPanValue(track);
+
+            channelEl.innerHTML = `
+                <div class="mixer-channel-color" style="background-color: ${track.color}"></div>
+                <div class="mixer-channel-name" title="${track.name}">${track.name}</div>
+                <div class="meter-container" data-track-id="${track.id}">
+                    <div class="meter-bar">
+                        <div class="meter-fill" data-meter-track="${track.id}"></div>
+                        <div class="meter-peak" data-peak-track="${track.id}"></div>
+                    </div>
+                </div>
+                <div class="mixer-solo-mute">
+                    <button class="mixer-mute ${track.muted ? 'active' : ''}" data-mixer-track="${track.id}" data-action="mute">M</button>
+                    <button class="mixer-solo ${track.solo ? 'active' : ''}" data-mixer-track="${track.id}" data-action="solo">S</button>
+                </div>
+                <div class="pan-control">
+                    <span class="pan-label">PAN</span>
+                    <div class="pan-knob-container" data-mixer-track="${track.id}" data-pan-value="${panValue}">
+                        <div class="pan-knob">
+                            <div class="pan-knob-indicator" style="transform: translateX(-50%) rotate(${(panValue - 64) * 1.4}deg)"></div>
+                        </div>
+                    </div>
+                    <span class="pan-value">${this.panToDisplayValue(panValue)}</span>
+                </div>
+                <div class="volume-fader-container">
+                    <div class="volume-fader-track" data-mixer-track="${track.id}" data-volume-value="${volumeValue}">
+                        <div class="volume-fader-fill" style="height: ${(volumeValue / 127) * 100}%"></div>
+                        <div class="volume-fader-handle" style="bottom: calc(${(volumeValue / 127) * 100}% - 7px)"></div>
+                    </div>
+                    <span class="volume-value">${Math.round(volumeValue)}</span>
+                </div>
+            `;
+
+            channelEl.addEventListener('click', (e) => {
+                if (e.target.closest('.mixer-mute') ||
+                    e.target.closest('.mixer-solo') ||
+                    e.target.closest('.volume-fader-track') ||
+                    e.target.closest('.pan-knob-container')) {
+                    return;
+                }
+                this.activeTrackId = track.id;
+                this.activeChannelId = track.activeChannelId;
+                this.renderTrackList();
+                this.renderChannelSelect();
+                this.render();
+                this.renderVelocity();
+                this.renderMixer();
+            });
+
+            const muteBtn = channelEl.querySelector('.mixer-mute');
+            if (muteBtn) {
+                muteBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    track.muted = !track.muted;
+                    this.renderTrackList();
+                    this.renderMixer();
+                });
+            }
+
+            const soloBtn = channelEl.querySelector('.mixer-solo');
+            if (soloBtn) {
+                soloBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    track.solo = !track.solo;
+                    this.renderTrackList();
+                    this.renderMixer();
+                });
+            }
+
+            const faderTrack = channelEl.querySelector('.volume-fader-track');
+            if (faderTrack) {
+                const startDrag = (e) => {
+                    e.preventDefault();
+                    const rect = faderTrack.getBoundingClientRect();
+                    this.mixerFaderDragState = {
+                        trackId: track.id,
+                        rect: rect,
+                        startY: e.clientY
+                    };
+                    this.onMixerFaderDrag(e);
+                };
+                faderTrack.addEventListener('mousedown', startDrag);
+            }
+
+            const panContainer = channelEl.querySelector('.pan-knob-container');
+            if (panContainer) {
+                panContainer.addEventListener('mousedown', (e) => {
+                    e.preventDefault();
+                    this.mixerPanDragState = {
+                        trackId: track.id,
+                        startY: e.clientY,
+                        startValue: this.getTrackPanValue(track)
+                    };
+                    this.onMixerPanDrag(e);
+                });
+            }
+
+            this.mixerChannels.appendChild(channelEl);
+        });
+    }
+
+    onMixerFaderDrag(e) {
+        if (!this.mixerFaderDragState) return;
+        const track = this.tracks.find(t => t.id === this.mixerFaderDragState.trackId);
+        if (!track) return;
+        const rect = this.mixerFaderDragState.rect;
+        const trackHeight = rect.height;
+        let yFromBottom = (rect.bottom - e.clientY);
+        yFromBottom = Math.max(0, Math.min(trackHeight, yFromBottom));
+        const value = Math.round((yFromBottom / trackHeight) * 127);
+        this.setTrackVolume(track, value);
+    }
+
+    onMixerPanDrag(e) {
+        if (!this.mixerPanDragState) return;
+        const track = this.tracks.find(t => t.id === this.mixerPanDragState.trackId);
+        if (!track) return;
+        const dy = this.mixerPanDragState.startY - e.clientY;
+        const sensitivity = 0.8;
+        let value = this.mixerPanDragState.startValue + dy * sensitivity;
+        value = Math.max(0, Math.min(127, Math.round(value)));
+        this.setTrackPan(track, value);
+    }
+
+    updateMixerMeters(activeNotes) {
+        if (!this.mixerChannels || this.mixerCollapsed) return;
+        const currentTick = this.playTick;
+        const hasSolo = this.tracks.some(t => t.solo);
+
+        this.tracks.forEach(track => {
+            let level = 0;
+            if (!track.muted && (!hasSolo || track.solo)) {
+                for (const note of track.notes) {
+                    if (note.startTick <= currentTick &&
+                        note.startTick + note.durationTicks > currentTick) {
+                        const noteProgress = (currentTick - note.startTick) / note.durationTicks;
+                        let envMultiplier = 1;
+                        if (noteProgress < 0.1) {
+                            envMultiplier = noteProgress / 0.1;
+                        } else if (noteProgress > 0.8) {
+                            envMultiplier = (1 - noteProgress) / 0.2;
+                        }
+                        level += (note.velocity / 127) * envMultiplier;
+                    }
+                }
+            }
+            const volChannel = track.automationChannels.find(c => c.type === 'volume');
+            let volMultiplier = track.volume / 127;
+            if (volChannel) {
+                volMultiplier = getAutomationValueAtTime(volChannel, currentTick) / 127;
+            }
+            level = Math.min(1, level * 0.5 * volMultiplier);
+            const currentPeak = this.trackPeakHold.get(track.id) || 0;
+            const newPeak = Math.max(currentPeak * 0.95, level);
+            this.trackPeakHold.set(track.id, newPeak);
+
+            const meterFill = document.querySelector(`[data-meter-track="${track.id}"]`);
+            const meterPeak = document.querySelector(`[data-peak-track="${track.id}"]`);
+
+            if (meterFill) {
+                meterFill.style.height = `${level * 100}%`;
+            }
+            if (meterPeak) {
+                meterPeak.style.bottom = `${newPeak * 100}%`;
+            }
+        });
+    }
+
+    resetMixerMeters() {
+        this.trackPeakHold.clear();
+        if (!this.mixerChannels) return;
+        this.tracks.forEach(track => {
+            const meterFill = document.querySelector(`[data-meter-track="${track.id}"]`);
+            const meterPeak = document.querySelector(`[data-peak-track="${track.id}"]`);
+            if (meterFill) {
+                meterFill.style.height = '0%';
+            }
+            if (meterPeak) {
+                meterPeak.style.bottom = '0%';
+            }
+        });
     }
 }
 

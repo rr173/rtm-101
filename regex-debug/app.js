@@ -704,11 +704,29 @@ class NFACompiler {
                 return this.compileQuantifier(node);
             case 'group':
                 return this.compileGroup(node);
+            case 'anchor':
+                return this.compileAnchor(node);
             case 'empty':
                 return this.instructions.length;
             default:
                 return this.instructions.length;
         }
+    }
+
+    compileAnchor(node) {
+        const start = node._start !== undefined ? node._start : 0;
+        const end = node._end !== undefined ? node._end : 1;
+        let anchorType = node.value;
+        if (anchorType === '^') {
+            return this.emit('ASSERT_START', {}, start, end);
+        } else if (anchorType === '$') {
+            return this.emit('ASSERT_END', {}, start, end);
+        } else if (anchorType === '\\b') {
+            return this.emit('ASSERT_WORD_BOUNDARY', {}, start, end);
+        } else if (anchorType === '\\B') {
+            return this.emit('ASSERT_NON_WORD_BOUNDARY', {}, start, end);
+        }
+        return this.instructions.length;
     }
 
     compileSequence(node) {
@@ -970,7 +988,9 @@ function annotateAstWithPositions(node, regexStr, pos) {
     }
 }
 
-function characterClassMatches(node, ch) {
+function characterClassMatches(node, ch, caseInsensitive) {
+    caseInsensitive = caseInsensitive || false;
+    const testCh = caseInsensitive ? ch.toLowerCase() : ch;
     if (node.escapeKind) {
         const kind = node.escapeKind;
         const isDigit = /\d/.test(ch);
@@ -989,9 +1009,12 @@ function characterClassMatches(node, ch) {
     let matched = false;
     for (const member of node.members) {
         if (member.type === 'literal') {
-            if (ch === member.value) { matched = true; break; }
+            const memVal = caseInsensitive ? member.value.toLowerCase() : member.value;
+            if (testCh === memVal) { matched = true; break; }
         } else if (member.type === 'range') {
-            if (ch >= member.start && ch <= member.end) { matched = true; break; }
+            const rStart = caseInsensitive ? member.start.toLowerCase() : member.start;
+            const rEnd = caseInsensitive ? member.end.toLowerCase() : member.end;
+            if (testCh >= rStart && testCh <= rEnd) { matched = true; break; }
         } else if (member.type === 'escape') {
             const kind = member.kind;
             const isDigit = /\d/.test(ch);
@@ -1008,11 +1031,12 @@ function characterClassMatches(node, ch) {
 }
 
 class NFAStepper {
-    constructor(instructions, text, startPos, regexStr) {
+    constructor(instructions, text, startPos, regexStr, flags) {
         this.instructions = instructions;
         this.text = text;
         this.startPos = startPos;
         this.regexStr = regexStr;
+        this.flags = flags || {};
         this.steps = [];
         this.currentStepIndex = -1;
         this.finished = false;
@@ -1024,8 +1048,9 @@ class NFAStepper {
         this.finished = false;
         this.succeeded = false;
 
-        const caseInsensitive = false;
-        const dotAll = false;
+        const caseInsensitive = !!this.flags.i;
+        const multiline = !!this.flags.m;
+        const dotAll = !!this.flags.s;
 
         const textLen = this.text.length;
         const startPos = this.startPos;
@@ -1059,11 +1084,12 @@ class NFAStepper {
                         const textCh = this.text[sp];
                         const match = caseInsensitive ? ch.toLowerCase() === textCh.toLowerCase() : ch === textCh;
                         if (match) {
+                            const ciStr = caseInsensitive && ch.toLowerCase() !== ch ? ' (忽略大小写)' : '';
                             this.recordStep({
                                 pc, sp, groups: { ...groups },
                                 stack: this.copyStack(backtrackStack),
                                 action: 'match_char',
-                                description: `字符匹配: '${escapeForDisplay(textCh)}' == '${escapeForDisplay(ch)}'`,
+                                description: `字符匹配${ciStr}: '${escapeForDisplay(textCh)}' == '${escapeForDisplay(ch)}'`,
                                 isBacktrack: false,
                                 matched: true
                             });
@@ -1072,13 +1098,14 @@ class NFAStepper {
                             continue;
                         }
                     }
+                    const ciStr = caseInsensitive ? ' (忽略大小写)' : '';
                     this.recordStep({
                         pc, sp, groups: { ...groups },
                         stack: this.copyStack(backtrackStack),
                         action: 'fail_char',
                         description: sp < textLen
-                            ? `字符不匹配: '${escapeForDisplay(this.text[sp])}' != '${escapeForDisplay(ch)}'`
-                            : `到达文本末尾，期望 '${escapeForDisplay(ch)}'`,
+                            ? `字符不匹配${ciStr}: '${escapeForDisplay(this.text[sp])}' != '${escapeForDisplay(ch)}'`
+                            : `到达文本末尾，期望${ciStr} '${escapeForDisplay(ch)}'`,
                         isBacktrack: false,
                         matched: false
                     });
@@ -1117,12 +1144,13 @@ class NFAStepper {
                 case 'MATCH_CLASS': {
                     if (sp < textLen) {
                         const ch = this.text[sp];
-                        if (characterClassMatches(instr.data, ch)) {
+                        if (characterClassMatches(instr.data, ch, caseInsensitive)) {
+                            const ciStr = caseInsensitive ? ' (忽略大小写)' : '';
                             this.recordStep({
                                 pc, sp, groups: { ...groups },
                                 stack: this.copyStack(backtrackStack),
                                 action: 'match_class',
-                                description: `字符类匹配: '${escapeForDisplay(ch)}'`,
+                                description: `字符类匹配${ciStr}: '${escapeForDisplay(ch)}'`,
                                 isBacktrack: false,
                                 matched: true
                             });
@@ -1131,13 +1159,128 @@ class NFAStepper {
                             continue;
                         }
                     }
+                    const ciStr = caseInsensitive ? ' (忽略大小写)' : '';
                     this.recordStep({
                         pc, sp, groups: { ...groups },
                         stack: this.copyStack(backtrackStack),
                         action: 'fail_class',
                         description: sp < textLen
-                            ? `字符类不匹配: '${escapeForDisplay(this.text[sp])}'`
+                            ? `字符类不匹配${ciStr}: '${escapeForDisplay(this.text[sp])}'`
                             : `到达文本末尾`,
+                        isBacktrack: false,
+                        matched: false
+                    });
+                    break;
+                }
+
+                case 'ASSERT_START': {
+                    const atStart = (sp === 0) || (multiline && (sp === 0 || this.text[sp - 1] === '\n'));
+                    if (atStart) {
+                        this.recordStep({
+                            pc, sp, groups: { ...groups },
+                            stack: this.copyStack(backtrackStack),
+                            action: 'assert_start',
+                            description: multiline
+                                ? `锚点 ^: 行首匹配成功 (位置 ${sp})`
+                                : `锚点 ^: 字符串开头匹配成功 (位置 ${sp})`,
+                            isBacktrack: false,
+                            matched: true
+                        });
+                        pc++;
+                        continue;
+                    }
+                    this.recordStep({
+                        pc, sp, groups: { ...groups },
+                        stack: this.copyStack(backtrackStack),
+                        action: 'fail_start',
+                        description: multiline
+                            ? `锚点 ^ 失败: 位置 ${sp} 不是行首`
+                            : `锚点 ^ 失败: 位置 ${sp} 不是字符串开头`,
+                        isBacktrack: false,
+                        matched: false
+                    });
+                    break;
+                }
+
+                case 'ASSERT_END': {
+                    const atEnd = (sp === textLen) || (multiline && (sp === textLen || this.text[sp] === '\n'));
+                    if (atEnd) {
+                        this.recordStep({
+                            pc, sp, groups: { ...groups },
+                            stack: this.copyStack(backtrackStack),
+                            action: 'assert_end',
+                            description: multiline
+                                ? `锚点 $: 行尾匹配成功 (位置 ${sp})`
+                                : `锚点 $: 字符串结尾匹配成功 (位置 ${sp})`,
+                            isBacktrack: false,
+                            matched: true
+                        });
+                        pc++;
+                        continue;
+                    }
+                    this.recordStep({
+                        pc, sp, groups: { ...groups },
+                        stack: this.copyStack(backtrackStack),
+                        action: 'fail_end',
+                        description: multiline
+                            ? `锚点 $ 失败: 位置 ${sp} 不是行尾`
+                            : `锚点 $ 失败: 位置 ${sp} 不是字符串结尾`,
+                        isBacktrack: false,
+                        matched: false
+                    });
+                    break;
+                }
+
+                case 'ASSERT_WORD_BOUNDARY': {
+                    const prev = sp > 0 ? this.text[sp - 1] : '';
+                    const curr = sp < textLen ? this.text[sp] : '';
+                    const prevWord = prev ? /\w/.test(prev) : false;
+                    const currWord = curr ? /\w/.test(curr) : false;
+                    if (prevWord !== currWord) {
+                        this.recordStep({
+                            pc, sp, groups: { ...groups },
+                            stack: this.copyStack(backtrackStack),
+                            action: 'assert_boundary',
+                            description: `锚点 \\b: 单词边界匹配成功 (位置 ${sp})`,
+                            isBacktrack: false,
+                            matched: true
+                        });
+                        pc++;
+                        continue;
+                    }
+                    this.recordStep({
+                        pc, sp, groups: { ...groups },
+                        stack: this.copyStack(backtrackStack),
+                        action: 'fail_boundary',
+                        description: `锚点 \\b 失败: 位置 ${sp} 不是单词边界`,
+                        isBacktrack: false,
+                        matched: false
+                    });
+                    break;
+                }
+
+                case 'ASSERT_NON_WORD_BOUNDARY': {
+                    const prev = sp > 0 ? this.text[sp - 1] : '';
+                    const curr = sp < textLen ? this.text[sp] : '';
+                    const prevWord = prev ? /\w/.test(prev) : false;
+                    const currWord = curr ? /\w/.test(curr) : false;
+                    if (prevWord === currWord) {
+                        this.recordStep({
+                            pc, sp, groups: { ...groups },
+                            stack: this.copyStack(backtrackStack),
+                            action: 'assert_non_boundary',
+                            description: `锚点 \\B: 非单词边界匹配成功 (位置 ${sp})`,
+                            isBacktrack: false,
+                            matched: true
+                        });
+                        pc++;
+                        continue;
+                    }
+                    this.recordStep({
+                        pc, sp, groups: { ...groups },
+                        stack: this.copyStack(backtrackStack),
+                        action: 'fail_non_boundary',
+                        description: `锚点 \\B 失败: 位置 ${sp} 是单词边界`,
                         isBacktrack: false,
                         matched: false
                     });
@@ -1509,6 +1652,13 @@ function startStepDebug() {
     const testStr = document.getElementById('testInput').value;
     const matches = _currentMatches;
     const matchIdx = stepDebuggerState.selectedMatchIndex;
+    const flagsStr = getFlags();
+    const flags = {
+        i: flagsStr.includes('i'),
+        m: flagsStr.includes('m'),
+        s: flagsStr.includes('s'),
+        g: flagsStr.includes('g')
+    };
 
     if (matchIdx < 0 || !matches || !matches[matchIdx]) {
         document.getElementById('stepStatus').textContent = '请先选择一个匹配';
@@ -1526,7 +1676,7 @@ function startStepDebug() {
         const compiler = new NFACompiler(regexStr);
         const instructions = compiler.compile(ast);
 
-        const stepper = new NFAStepper(instructions, testStr, startPos, regexStr);
+        const stepper = new NFAStepper(instructions, testStr, startPos, regexStr, flags);
         stepper.run();
 
         stepDebuggerState.stepper = stepper;

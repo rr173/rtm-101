@@ -39,6 +39,12 @@
                         <span class="snap-state">Off</span>
                     </button>
                 </div>
+                <div class="sheet-music-control">
+                    <button id="sheetMusicBtn" class="toolbar-btn sheet-music-btn" title="Toggle Sheet Music View">
+                        <span class="sheet-music-icon">♫</span>
+                        <span class="sheet-music-state">乐谱</span>
+                    </button>
+                </div>
                 <div class="dropdown-control">
                     <button id="selectBtn" class="toolbar-btn dropdown-btn">
                         Select ▾
@@ -71,14 +77,18 @@
         <div class="main-content">
             <div class="piano-roll-container">
                 <div class="top-spacer"></div>
-                <div class="chord-label-spacer">Chords</div>
-                <div class="piano-keyboard" id="pianoKeyboard"></div>
                 <div class="ruler-container" id="rulerContainer">
                     <canvas id="rulerCanvas"></canvas>
                 </div>
+                <div class="sheet-music-spacer">Staff</div>
+                <div class="sheet-music-container" id="sheetMusicContainer">
+                    <canvas id="sheetMusicCanvas"></canvas>
+                </div>
+                <div class="chord-label-spacer">Chords</div>
                 <div class="chord-track-container" id="chordTrackContainer">
                     <canvas id="chordTrackCanvas"></canvas>
                 </div>
+                <div class="piano-keyboard" id="pianoKeyboard"></div>
                 <div class="grid-area">
                     <div class="grid-main-area">
                         <div class="grid-container" id="gridContainer">

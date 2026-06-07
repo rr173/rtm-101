@@ -283,6 +283,11 @@ class PianoRollEditor {
 
         this.trackPeakHold = new Map();
         
+        this.sheetMusicVisible = false;
+        this.sheetMusicCanvas = null;
+        this.sheetMusicCtx = null;
+        this.sheetMusicContainer = null;
+        
         this.init();
     }
     
@@ -308,6 +313,10 @@ class PianoRollEditor {
         this.chordTrackCanvas = document.getElementById('chordTrackCanvas');
         this.chordTrackCtx = this.chordTrackCanvas.getContext('2d');
         this.chordTrackContainer = document.getElementById('chordTrackContainer');
+
+        this.sheetMusicCanvas = document.getElementById('sheetMusicCanvas');
+        this.sheetMusicCtx = this.sheetMusicCanvas ? this.sheetMusicCanvas.getContext('2d') : null;
+        this.sheetMusicContainer = document.getElementById('sheetMusicContainer');
 
         this.mixerPanel = document.getElementById('mixerPanel');
         this.mixerChannels = document.getElementById('mixerChannels');
@@ -339,6 +348,8 @@ class PianoRollEditor {
             this.renderVelocity();
             this.resizeChordTrackCanvas();
             this.renderChordTrack();
+            this.resizeSheetMusicCanvas();
+            this.renderSheetMusic();
             this.renderMixer();
         }, 100);
     }
@@ -520,6 +531,9 @@ class PianoRollEditor {
             this.rulerContainer.scrollLeft = this.scrollX;
             this.automationCanvasContainer.scrollLeft = this.scrollX;
             this.chordTrackContainer.scrollLeft = this.scrollX;
+            if (this.sheetMusicContainer) {
+                this.sheetMusicContainer.scrollLeft = this.scrollX;
+            }
             if (this.velocityCanvasContainer) {
                 this.velocityCanvasContainer.scrollLeft = this.scrollX;
             }
@@ -533,6 +547,9 @@ class PianoRollEditor {
             this.gridContainer.scrollLeft = this.scrollX;
             this.rulerContainer.scrollLeft = this.scrollX;
             this.chordTrackContainer.scrollLeft = this.scrollX;
+            if (this.sheetMusicContainer) {
+                this.sheetMusicContainer.scrollLeft = this.scrollX;
+            }
             if (this.velocityCanvasContainer) {
                 this.velocityCanvasContainer.scrollLeft = this.scrollX;
             }
@@ -691,6 +708,26 @@ class PianoRollEditor {
             this.rulerContainer.scrollLeft = this.scrollX;
             this.automationCanvasContainer.scrollLeft = this.scrollX;
             this.chordTrackContainer.scrollLeft = this.scrollX;
+            if (this.sheetMusicContainer) {
+                this.sheetMusicContainer.scrollLeft = this.scrollX;
+            }
+        });
+
+        if (this.sheetMusicContainer) {
+            this.sheetMusicContainer.addEventListener('scroll', () => {
+                this.scrollX = this.sheetMusicContainer.scrollLeft;
+                this.gridContainer.scrollLeft = this.scrollX;
+                this.rulerContainer.scrollLeft = this.scrollX;
+                this.automationCanvasContainer.scrollLeft = this.scrollX;
+                this.chordTrackContainer.scrollLeft = this.scrollX;
+                if (this.velocityCanvasContainer) {
+                    this.velocityCanvasContainer.scrollLeft = this.scrollX;
+                }
+            });
+        }
+
+        document.getElementById('sheetMusicBtn').addEventListener('click', () => {
+            this.toggleSheetMusic();
         });
 
         this.chordTrackCanvas.addEventListener('click', (e) => this.onChordTrackClick(e));
@@ -1228,12 +1265,14 @@ class PianoRollEditor {
         
         this.resizeVelocityCanvas();
         this.resizeChordTrackCanvas();
+        this.resizeSheetMusicCanvas();
         
         this.render();
         this.renderRuler();
         this.renderAutomation();
         this.renderVelocity();
         this.renderChordTrack();
+        this.renderSheetMusic();
     }
     
     resizeVelocityCanvas() {
@@ -1267,6 +1306,243 @@ class PianoRollEditor {
         const minWidth = maxTick * this.cellWidth + 200;
         this.chordTrackCanvas.width = Math.max(this.chordTrackContainer.clientWidth, minWidth, 3000);
         this.chordTrackCanvas.height = 30;
+    }
+
+    toggleSheetMusic() {
+        this.sheetMusicVisible = !this.sheetMusicVisible;
+        const btn = document.getElementById('sheetMusicBtn');
+        const spacer = document.querySelector('.sheet-music-spacer');
+        const container = this.sheetMusicContainer;
+        const rollContainer = document.querySelector('.piano-roll-container');
+
+        if (this.sheetMusicVisible) {
+            btn.classList.add('active');
+            container.classList.add('visible');
+            container.classList.remove('collapsed');
+            spacer.style.display = 'flex';
+            rollContainer.style.gridTemplateRows = '30px 150px 30px 1fr';
+            setTimeout(() => {
+                this.resizeSheetMusicCanvas();
+                this.renderSheetMusic();
+            }, 50);
+        } else {
+            btn.classList.remove('active');
+            container.classList.remove('visible');
+            container.classList.add('collapsed');
+            spacer.style.display = 'none';
+            rollContainer.style.gridTemplateRows = '30px 0px 30px 1fr';
+        }
+    }
+
+    resizeSheetMusicCanvas() {
+        if (!this.sheetMusicCanvas || !this.sheetMusicContainer) return;
+        if (!this.sheetMusicVisible) return;
+
+        let maxTick = 64;
+        this.tracks.forEach(track => {
+            track.notes.forEach(note => {
+                const end = note.startTick + note.durationTicks;
+                if (end > maxTick) maxTick = end;
+            });
+        });
+
+        const minWidth = maxTick * this.cellWidth + 200;
+        const containerHeight = this.sheetMusicContainer.clientHeight || 150;
+        this.sheetMusicCanvas.width = Math.max(this.sheetMusicContainer.clientWidth, minWidth, 3000);
+        this.sheetMusicCanvas.height = containerHeight;
+    }
+
+    pitchToStaffPosition(pitch) {
+        const middleC = 60;
+        const semitonesFromC = pitch - middleC;
+        const octaves = Math.floor(semitonesFromC / 12);
+        const semitoneInOctave = ((semitonesFromC % 12) + 12) % 12;
+
+        const diatonicStepsInOctave = [0, 0.5, 1, 1.5, 2, 3, 3.5, 4, 4.5, 5, 5.5, 6];
+        const step = diatonicStepsInOctave[semitoneInOctave];
+        
+        const staffPosition = octaves * 7 + step;
+        return staffPosition;
+    }
+
+    getNoteDurationType(durationTicks) {
+        const ticksPerWhole = TICKS_PER_BEAT * 4;
+        const ratio = durationTicks / ticksPerWhole;
+
+        if (ratio >= 0.95) return 'whole';
+        if (ratio >= 0.45) return 'half';
+        if (ratio >= 0.225) return 'quarter';
+        if (ratio >= 0.1125) return 'eighth';
+        return 'sixteenth';
+        return 'quarter';
+    }
+
+    renderSheetMusic() {
+        if (!this.sheetMusicCtx || !this.sheetMusicCanvas || !this.sheetMusicVisible) return;
+        const ctx = this.sheetMusicCtx;
+        const width = this.sheetMusicCanvas.width;
+        const height = this.sheetMusicCanvas.height;
+        if (width === 0 || height === 0) return;
+
+        ctx.fillStyle = '#f5f0e6';
+        ctx.fillRect(0, 0, width, height);
+
+        const staffTop = height * 0.2;
+        const staffBottom = height * 0.8;
+        const staffHeight = staffBottom - staffTop;
+        const lineSpacing = staffHeight / 4;
+        const centerY = (staffTop + staffBottom) / 2;
+
+        const staffLineY = [];
+        for (let i = 0; i < 5; i++) {
+            staffLineY.push(staffTop + i * lineSpacing);
+        }
+
+        ctx.strokeStyle = '#333';
+        ctx.lineWidth = 1;
+        staffLineY.forEach(y => {
+            ctx.beginPath();
+            ctx.moveTo(0, y);
+            ctx.lineTo(width, y);
+            ctx.stroke();
+        });
+
+        const trebleClefX = 30;
+        ctx.fillStyle = '#333';
+        ctx.font = `${staffHeight * 1.3}px serif`;
+        ctx.textBaseline = 'middle';
+        ctx.fillText('𝄞', trebleClefX, centerY + lineSpacing * 0.3);
+
+        const totalTicks = Math.ceil(width / this.cellWidth);
+        for (let tick = 0; tick <= totalTicks; tick += TICKS_PER_BAR) {
+            const x = tick * this.cellWidth;
+            if (x < trebleClefX + 40) continue;
+            ctx.strokeStyle = '#333';
+            ctx.lineWidth = tick % (TICKS_PER_BAR * 4) === 0 ? 2 : 1;
+            ctx.beginPath();
+            ctx.moveTo(x, staffTop);
+            ctx.lineTo(x, staffBottom);
+            ctx.stroke();
+        }
+
+        const track = this.getActiveTrack();
+        if (!track || !track.notes || track.notes.length === 0) {
+            if (this.isPlaying || this.isPaused) {
+                const playX = this.playTick * this.cellWidth;
+                ctx.strokeStyle = '#ff4444';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(playX, staffTop - lineSpacing * 3);
+                ctx.lineTo(playX, staffBottom + lineSpacing * 3);
+                ctx.stroke();
+            }
+            return;
+        }
+
+        const sortedNotes = [...track.notes].sort((a, b) => a.startTick - b.startTick);
+
+        sortedNotes.forEach(note => {
+            const x = note.startTick * this.cellWidth + this.cellWidth / 2;
+            const staffPos = this.pitchToStaffPosition(note.pitch);
+            const noteY = centerY - staffPos * (lineSpacing / 2);
+            const durationType = this.getNoteDurationType(note.durationTicks);
+
+            const noteHeadWidth = lineSpacing * 0.8;
+            const noteHeadHeight = lineSpacing * 0.6;
+            const stemHeight = lineSpacing * 2.5;
+            const isFilled = durationType !== 'whole' && durationType !== 'half';
+            const hasStem = durationType !== 'whole';
+            const numFlags = durationType === 'eighth' ? 1 : durationType === 'sixteenth' ? 2 : 0;
+
+            const aboveStaff = noteY < staffTop - lineSpacing;
+            const belowStaff = noteY > staffBottom + lineSpacing;
+
+            if (aboveStaff || belowStaff) {
+                let ledgerLineY = noteY;
+                while (ledgerLineY < staffTop - lineSpacing / 2 || ledgerLineY > staffBottom + lineSpacing / 2) {
+                    if (ledgerLineY < staffTop) {
+                        const stepsAbove = Math.floor((staffTop - ledgerLineY) / (lineSpacing / 2);
+                    }
+                    ledgerLineY += lineSpacing / 2;
+                }
+            }
+
+            const minLedger = Math.min(noteY, staffTop - lineSpacing / 2);
+            const maxLedger = Math.max(noteY, staffBottom + lineSpacing / 2);
+            for (let ly = Math.ceil(minLedger / (lineSpacing / 2)) * (lineSpacing / 2); ly <= Math.floor(maxLedger / (lineSpacing / 2)) * (lineSpacing / 2); ly += lineSpacing / 2) {
+                if (ly < staffTop - lineSpacing / 2 || ly > staffBottom + lineSpacing / 2) {
+                    if (Math.abs(ly - noteY) < 0.1) {
+                        ctx.strokeStyle = '#333';
+                        ctx.lineWidth = 1;
+                        ctx.beginPath();
+                        ctx.moveTo(x - noteHeadWidth * 0.8, ly);
+                        ctx.lineTo(x + noteHeadWidth * 0.8, ly);
+                        ctx.stroke();
+                    }
+                }
+            }
+
+            const stemUp = staffPos > 0;
+            const stemX = stemUp ? x + noteHeadWidth * 0.4 : x - noteHeadWidth * 0.4;
+            const stemStartY = stemUp ? noteY - noteHeadHeight * 0.3 : noteY + noteHeadHeight * 0.3;
+            const stemEndY = stemUp ? noteY - stemHeight : noteY + stemHeight;
+
+            ctx.fillStyle = '#111';
+            ctx.strokeStyle = '#111';
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.ellipse(x, noteY, noteHeadWidth / 2, noteHeadHeight / 2, -0.3, 0, Math.PI * 2);
+            if (isFilled) {
+                ctx.fill();
+            } else {
+                ctx.lineWidth = 2;
+                ctx.stroke();
+            }
+
+            if (hasStem) {
+                ctx.lineWidth = 1.5;
+                ctx.beginPath();
+                ctx.moveTo(stemX, stemStartY);
+                ctx.lineTo(stemX, stemEndY);
+                ctx.stroke();
+
+                if (numFlags > 0) {
+                    const flagY = stemEndY;
+                    const flagX = stemX;
+                    for (let f = 0; f < numFlags; f++) {
+                        const flagOffset = f * lineSpacing * 0.4 * (stemUp ? -1 : 1);
+                        ctx.beginPath();
+                        ctx.moveTo(flagX, flagY + flagOffset);
+                        ctx.quadraticCurveTo(
+                            flagX + (stemUp ? noteHeadWidth * 0.6 : -noteHeadWidth * 0.6),
+                            flagY + flagOffset + (stemUp ? -lineSpacing * 0.2 : lineSpacing * 0.2),
+                            flagX + (stemUp ? noteHeadWidth * 0.3 : -noteHeadWidth * 0.3),
+                            flagY + flagOffset + (stemUp ? -lineSpacing * 0.5 : lineSpacing * 0.5)
+                        );
+                        ctx.stroke();
+                    }
+                }
+            }
+
+            const isSelected = this.selectedNotes.has(note.id);
+            if (isSelected) {
+                ctx.strokeStyle = '#4a9eff';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.ellipse(x, noteY, noteHeadWidth / 2 + 2, noteHeadHeight / 2 + 2, -0.3, 0, Math.PI * 2);
+                ctx.stroke();
+            }
+        });
+
+        if (this.isPlaying || this.isPaused) {
+            const playX = this.playTick * this.cellWidth;
+            ctx.strokeStyle = '#ff4444';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(playX, staffTop - lineSpacing * 3);
+            ctx.lineTo(playX, staffBottom + lineSpacing * 3);
+            ctx.stroke();
+        }
     }
 
     getPitchesAtBeat(beatTick) {
@@ -1573,6 +1849,7 @@ class PianoRollEditor {
         
         this.renderAutomation();
         this.renderChordTrack();
+        this.renderSheetMusic();
     }
     
     renderNote(note, color, isActive) {
@@ -1710,6 +1987,7 @@ class PianoRollEditor {
                 this.renderChannelSelect();
                 this.render();
                 this.renderVelocity();
+                this.renderSheetMusic();
             });
             
             item.querySelector('.track-delete').addEventListener('click', (e) => {
@@ -2510,6 +2788,9 @@ class PianoRollEditor {
             this.gridContainer.scrollLeft += e.deltaY;
             this.automationCanvasContainer.scrollLeft += e.deltaY;
             this.chordTrackContainer.scrollLeft += e.deltaY;
+            if (this.sheetMusicContainer) {
+                this.sheetMusicContainer.scrollLeft += e.deltaY;
+            }
         }
     }
     
@@ -4468,6 +4749,7 @@ class PianoRollEditor {
                 this.renderChannelSelect();
                 this.render();
                 this.renderVelocity();
+                this.renderSheetMusic();
                 this.renderMixer();
             });
 

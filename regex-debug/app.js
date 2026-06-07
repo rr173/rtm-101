@@ -652,6 +652,947 @@ function refreshAst() {
     }
 }
 
+// ============================================================
+// Step Debugger: NFA Compiler + Backtracking Stepper
+// ============================================================
+
+class NFACompiler {
+    constructor(regexStr) {
+        this.regexStr = regexStr;
+        this.instructions = [];
+        this.groupCounter = 0;
+    }
+
+    emit(type, data, tokenStart, tokenEnd) {
+        const instr = { type, data: data || {}, tokenStart, tokenEnd, index: this.instructions.length };
+        this.instructions.push(instr);
+        return instr.index;
+    }
+
+    patch(instrIndex, target) {
+        this.instructions[instrIndex].data.target = target;
+    }
+
+    patchSplit(instrIndex, target1, target2) {
+        if (target1 !== undefined) this.instructions[instrIndex].data.target1 = target1;
+        if (target2 !== undefined) this.instructions[instrIndex].data.target2 = target2;
+    }
+
+    compile(ast) {
+        const end = this.compileNode(ast.children[0]);
+        this.emit('MATCH', {}, this.regexStr.length, this.regexStr.length);
+        return this.instructions;
+    }
+
+    compileNode(node) {
+        if (!node) return this.instructions.length;
+
+        switch (node.type) {
+            case 'sequence':
+                return this.compileSequence(node);
+            case 'alternation':
+                return this.compileAlternation(node);
+            case 'literal':
+                return this.compileLiteral(node);
+            case 'dot':
+                return this.compileDot(node);
+            case 'characterClass':
+                return this.compileCharacterClass(node);
+            case 'escape':
+                return this.compileEscape(node);
+            case 'quantifier':
+                return this.compileQuantifier(node);
+            case 'group':
+                return this.compileGroup(node);
+            case 'empty':
+                return this.instructions.length;
+            default:
+                return this.instructions.length;
+        }
+    }
+
+    compileSequence(node) {
+        let pos = this.instructions.length;
+        for (const item of node.items) {
+            this.compileNode(item);
+        }
+        return pos;
+    }
+
+    compileAlternation(node) {
+        const alts = node.alternatives;
+        const splits = [];
+        const ends = [];
+
+        for (let i = 0; i < alts.length - 1; i++) {
+            const splitIdx = this.emit('SPLIT', {}, node._start || 0, node._end || 0);
+            splits.push(splitIdx);
+            const firstAltStart = this.instructions.length;
+            this.patchSplit(splitIdx, firstAltStart, undefined);
+            this.compileNode(alts[i]);
+            const jumpIdx = this.emit('JUMP', {}, node._start || 0, node._end || 0);
+            ends.push(jumpIdx);
+            const secondAltStart = this.instructions.length;
+            this.patchSplit(splitIdx, firstAltStart, secondAltStart);
+        }
+
+        this.compileNode(alts[alts.length - 1]);
+
+        const endIdx = this.instructions.length;
+        for (const jumpIdx of ends) {
+            this.patch(jumpIdx, endIdx);
+        }
+        return splits[0] || this.instructions.length;
+    }
+
+    compileLiteral(node) {
+        const start = node._start !== undefined ? node._start : 0;
+        const end = node._end !== undefined ? node._end : 1;
+        return this.emit('MATCH_CHAR', { char: node.value, caseInsensitive: false }, start, end);
+    }
+
+    compileDot(node) {
+        const start = node._start !== undefined ? node._start : 0;
+        const end = node._end !== undefined ? node._end : 1;
+        return this.emit('MATCH_DOT', {}, start, end);
+    }
+
+    compileCharacterClass(node) {
+        const start = node._start !== undefined ? node._start : 0;
+        const end = node._end !== undefined ? node._end : 1;
+        return this.emit('MATCH_CLASS', { negated: node.negated, members: node.members }, start, end);
+    }
+
+    compileEscape(node) {
+        const start = node._start !== undefined ? node._start : 0;
+        const end = node._end !== undefined ? node._end : 2;
+        const kind = node.kind;
+        if (kind === 'digit' || kind === 'non-digit' || kind === 'word' || kind === 'non-word' || kind === 'whitespace' || kind === 'non-whitespace') {
+            return this.emit('MATCH_CLASS', { negated: kind.startsWith('non-'), escapeKind: kind }, start, end);
+        }
+        return this.emit('MATCH_CHAR', { char: node.value, caseInsensitive: false }, start, end);
+    }
+
+    compileQuantifier(node) {
+        const min = node.min;
+        const max = node.max;
+        const greedy = node.greedy;
+
+        const start = node._start !== undefined ? node._start : 0;
+        const end = node._end !== undefined ? node._end : (this.regexStr.length);
+
+        let prefixEnd = this.instructions.length;
+        for (let i = 0; i < min; i++) {
+            this.compileNode(node.child);
+        }
+
+        if (max === Infinity) {
+            const loopStart = this.instructions.length;
+            if (greedy) {
+                const splitIdx = this.emit('SPLIT', {}, start, end);
+                const childStart = this.instructions.length;
+                this.compileNode(node.child);
+                const jumpIdx = this.emit('JUMP', {}, start, end);
+                this.patch(jumpIdx, loopStart);
+                const afterLoop = this.instructions.length;
+                this.patchSplit(splitIdx, childStart, afterLoop);
+            } else {
+                const splitIdx = this.emit('SPLIT', {}, start, end);
+                const childStart = this.instructions.length;
+                this.compileNode(node.child);
+                const jumpIdx = this.emit('JUMP', {}, start, end);
+                this.patch(jumpIdx, loopStart);
+                const afterLoop = this.instructions.length;
+                this.patchSplit(splitIdx, afterLoop, childStart);
+            }
+        } else {
+            const optionalCount = max - min;
+            for (let i = 0; i < optionalCount; i++) {
+                if (greedy) {
+                    const splitIdx = this.emit('SPLIT', {}, start, end);
+                    const childStart = this.instructions.length;
+                    this.compileNode(node.child);
+                    const afterChild = this.instructions.length;
+                    this.patchSplit(splitIdx, childStart, afterChild);
+                } else {
+                    const splitIdx = this.emit('SPLIT', {}, start, end);
+                    const childStart = this.instructions.length;
+                    this.compileNode(node.child);
+                    const afterChild = this.instructions.length;
+                    this.patchSplit(splitIdx, afterChild, childStart);
+                }
+            }
+        }
+
+        return prefixEnd;
+    }
+
+    compileGroup(node) {
+        const start = node._start !== undefined ? node._start : 0;
+        const end = node._end !== undefined ? node._end : 1;
+
+        if (node.kind === 'capture' || node.kind === 'named') {
+            this.groupCounter++;
+            const groupNum = this.groupCounter;
+            this.emit('SAVE_GROUP_START', { groupNum }, start, start + 1);
+            this.compileNode(node.child);
+            this.emit('SAVE_GROUP_END', { groupNum }, end - 1, end);
+        } else {
+            this.compileNode(node.child);
+        }
+        return this.instructions.length;
+    }
+}
+
+function annotateAstWithPositions(node, regexStr, pos) {
+    if (!node) return pos;
+
+    switch (node.type) {
+        case 'pattern':
+            node._start = pos;
+            pos = annotateAstWithPositions(node.children[0], regexStr, pos);
+            node._end = pos;
+            return pos;
+
+        case 'sequence': {
+            node._start = pos;
+            const startPos = pos;
+            for (const item of node.items) {
+                pos = annotateAstWithPositions(item, regexStr, pos);
+            }
+            node._end = pos;
+            return pos;
+        }
+
+        case 'alternation': {
+            node._start = pos;
+            const startPos = pos;
+            for (let i = 0; i < node.alternatives.length; i++) {
+                pos = annotateAstWithPositions(node.alternatives[i], regexStr, pos);
+                if (i < node.alternatives.length - 1) {
+                    if (regexStr[pos] === '|') pos++;
+                }
+            }
+            node._end = pos;
+            return pos;
+        }
+
+        case 'literal':
+            node._start = pos;
+            pos += 1;
+            node._end = pos;
+            return pos;
+
+        case 'dot':
+            node._start = pos;
+            pos += 1;
+            node._end = pos;
+            return pos;
+
+        case 'anchor':
+            node._start = pos;
+            if (node.value === '\\b' || node.value === '\\B') pos += 2;
+            else pos += 1;
+            node._end = pos;
+            return pos;
+
+        case 'escape': {
+            node._start = pos;
+            pos += 2;
+            node._end = pos;
+            return pos;
+        }
+
+        case 'characterClass': {
+            node._start = pos;
+            let p = pos;
+            p++;
+            if (regexStr[p] === '^') p++;
+            while (p < regexStr.length && regexStr[p] !== ']') {
+                if (regexStr[p] === '\\' && p + 1 < regexStr.length) {
+                    p += 2;
+                } else {
+                    p++;
+                }
+            }
+            if (p < regexStr.length) p++;
+            node._end = p;
+            return p;
+        }
+
+        case 'quantifier': {
+            pos = annotateAstWithPositions(node.child, regexStr, pos);
+            node._start = node.child._start;
+            const qStart = pos;
+            if (node.kind === 'star' || node.kind === 'plus' || node.kind === 'question') {
+                pos += 1;
+            } else if (node.kind === 'brace') {
+                while (pos < regexStr.length && regexStr[pos] !== '}') pos++;
+                if (pos < regexStr.length) pos++;
+            }
+            if (pos < regexStr.length && regexStr[pos] === '?') pos++;
+            node._end = pos;
+            return pos;
+        }
+
+        case 'group': {
+            node._start = pos;
+            let p = pos;
+            p++;
+            if (regexStr[p] === '?') {
+                p++;
+                if (regexStr[p] === ':' || regexStr[p] === '=' || regexStr[p] === '!') p++;
+                else if (regexStr[p] === '<') {
+                    p++;
+                    while (p < regexStr.length && regexStr[p] !== '>') p++;
+                    if (p < regexStr.length) p++;
+                }
+            }
+            pos = annotateAstWithPositions(node.child, regexStr, p);
+            if (pos < regexStr.length && regexStr[pos] === ')') pos++;
+            node._end = pos;
+            return pos;
+        }
+
+        case 'backreference':
+            node._start = pos;
+            pos += 2;
+            node._end = pos;
+            return pos;
+
+        case 'empty':
+            node._start = pos;
+            node._end = pos;
+            return pos;
+
+        default:
+            return pos;
+    }
+}
+
+function characterClassMatches(node, ch) {
+    if (node.escapeKind) {
+        const kind = node.escapeKind;
+        const isDigit = /\d/.test(ch);
+        const isWord = /\w/.test(ch);
+        const isWhitespace = /\s/.test(ch);
+        switch (kind) {
+            case 'digit': return isDigit;
+            case 'non-digit': return !isDigit;
+            case 'word': return isWord;
+            case 'non-word': return !isWord;
+            case 'whitespace': return isWhitespace;
+            case 'non-whitespace': return !isWhitespace;
+            default: return false;
+        }
+    }
+    let matched = false;
+    for (const member of node.members) {
+        if (member.type === 'literal') {
+            if (ch === member.value) { matched = true; break; }
+        } else if (member.type === 'range') {
+            if (ch >= member.start && ch <= member.end) { matched = true; break; }
+        } else if (member.type === 'escape') {
+            const kind = member.kind;
+            const isDigit = /\d/.test(ch);
+            const isWord = /\w/.test(ch);
+            const isWhitespace = /\s/.test(ch);
+            if ((kind === 'd' && isDigit) || (kind === 'D' && !isDigit) ||
+                (kind === 'w' && isWord) || (kind === 'W' && !isWord) ||
+                (kind === 's' && isWhitespace) || (kind === 'S' && !isWhitespace)) {
+                matched = true; break;
+            }
+        }
+    }
+    return node.negated ? !matched : matched;
+}
+
+class NFAStepper {
+    constructor(instructions, text, startPos, regexStr) {
+        this.instructions = instructions;
+        this.text = text;
+        this.startPos = startPos;
+        this.regexStr = regexStr;
+        this.steps = [];
+        this.currentStepIndex = -1;
+        this.finished = false;
+        this.succeeded = false;
+    }
+
+    run() {
+        this.steps = [];
+        this.finished = false;
+        this.succeeded = false;
+
+        const caseInsensitive = false;
+        const dotAll = false;
+
+        const textLen = this.text.length;
+        const startPos = this.startPos;
+
+        const backtrackStack = [];
+        let pc = 0;
+        let sp = startPos;
+        let groups = {};
+
+        this.recordStep({
+            pc, sp, groups: { ...groups },
+            stack: [],
+            action: 'init',
+            description: `从文本位置 ${startPos} 开始匹配`,
+            isBacktrack: false
+        });
+
+        const MAX_STEPS = 10000;
+        let stepCount = 0;
+
+        while (stepCount < MAX_STEPS) {
+            stepCount++;
+            if (pc >= this.instructions.length) break;
+
+            const instr = this.instructions[pc];
+
+            switch (instr.type) {
+                case 'MATCH_CHAR': {
+                    const ch = instr.data.char;
+                    if (sp < textLen) {
+                        const textCh = this.text[sp];
+                        const match = caseInsensitive ? ch.toLowerCase() === textCh.toLowerCase() : ch === textCh;
+                        if (match) {
+                            this.recordStep({
+                                pc, sp, groups: { ...groups },
+                                stack: this.copyStack(backtrackStack),
+                                action: 'match_char',
+                                description: `字符匹配: '${escapeForDisplay(textCh)}' == '${escapeForDisplay(ch)}'`,
+                                isBacktrack: false,
+                                matched: true
+                            });
+                            pc++;
+                            sp++;
+                            continue;
+                        }
+                    }
+                    this.recordStep({
+                        pc, sp, groups: { ...groups },
+                        stack: this.copyStack(backtrackStack),
+                        action: 'fail_char',
+                        description: sp < textLen
+                            ? `字符不匹配: '${escapeForDisplay(this.text[sp])}' != '${escapeForDisplay(ch)}'`
+                            : `到达文本末尾，期望 '${escapeForDisplay(ch)}'`,
+                        isBacktrack: false,
+                        matched: false
+                    });
+                    break;
+                }
+
+                case 'MATCH_DOT': {
+                    if (sp < textLen) {
+                        const ch = this.text[sp];
+                        const isNewline = (ch === '\n' || ch === '\r');
+                        if (dotAll || !isNewline) {
+                            this.recordStep({
+                                pc, sp, groups: { ...groups },
+                                stack: this.copyStack(backtrackStack),
+                                action: 'match_dot',
+                                description: `点号匹配: '${escapeForDisplay(ch)}'`,
+                                isBacktrack: false,
+                                matched: true
+                            });
+                            pc++;
+                            sp++;
+                            continue;
+                        }
+                    }
+                    this.recordStep({
+                        pc, sp, groups: { ...groups },
+                        stack: this.copyStack(backtrackStack),
+                        action: 'fail_dot',
+                        description: sp < textLen ? `点号不匹配换行符` : `到达文本末尾`,
+                        isBacktrack: false,
+                        matched: false
+                    });
+                    break;
+                }
+
+                case 'MATCH_CLASS': {
+                    if (sp < textLen) {
+                        const ch = this.text[sp];
+                        if (characterClassMatches(instr.data, ch)) {
+                            this.recordStep({
+                                pc, sp, groups: { ...groups },
+                                stack: this.copyStack(backtrackStack),
+                                action: 'match_class',
+                                description: `字符类匹配: '${escapeForDisplay(ch)}'`,
+                                isBacktrack: false,
+                                matched: true
+                            });
+                            pc++;
+                            sp++;
+                            continue;
+                        }
+                    }
+                    this.recordStep({
+                        pc, sp, groups: { ...groups },
+                        stack: this.copyStack(backtrackStack),
+                        action: 'fail_class',
+                        description: sp < textLen
+                            ? `字符类不匹配: '${escapeForDisplay(this.text[sp])}'`
+                            : `到达文本末尾`,
+                        isBacktrack: false,
+                        matched: false
+                    });
+                    break;
+                }
+
+                case 'SAVE_GROUP_START': {
+                    const gn = instr.data.groupNum;
+                    groups['start_' + gn] = sp;
+                    this.recordStep({
+                        pc, sp, groups: { ...groups },
+                        stack: this.copyStack(backtrackStack),
+                        action: 'group_start',
+                        description: `捕获组 ${gn} 起始位置: ${sp}`,
+                        isBacktrack: false
+                    });
+                    pc++;
+                    continue;
+                }
+
+                case 'SAVE_GROUP_END': {
+                    const gn = instr.data.groupNum;
+                    groups['end_' + gn] = sp;
+                    this.recordStep({
+                        pc, sp, groups: { ...groups },
+                        stack: this.copyStack(backtrackStack),
+                        action: 'group_end',
+                        description: `捕获组 ${gn} 结束位置: ${sp} (内容: '${escapeForDisplay(this.text.slice(groups['start_' + gn] || 0, sp))}')`,
+                        isBacktrack: false
+                    });
+                    pc++;
+                    continue;
+                }
+
+                case 'SPLIT': {
+                    const t1 = instr.data.target1;
+                    const t2 = instr.data.target2;
+                    this.recordStep({
+                        pc, sp, groups: { ...groups },
+                        stack: this.copyStack(backtrackStack),
+                        action: 'split',
+                        description: `分支: 尝试主分支 (指令 ${t1})，备用分支 (指令 ${t2}) 压入回溯栈`,
+                        isBacktrack: false
+                    });
+                    backtrackStack.push({
+                        pc: t2,
+                        sp: sp,
+                        groups: { ...groups },
+                        reason: '分支回溯'
+                    });
+                    pc = t1;
+                    continue;
+                }
+
+                case 'JUMP': {
+                    this.recordStep({
+                        pc, sp, groups: { ...groups },
+                        stack: this.copyStack(backtrackStack),
+                        action: 'jump',
+                        description: `跳转到指令 ${instr.data.target}`,
+                        isBacktrack: false
+                    });
+                    pc = instr.data.target;
+                    continue;
+                }
+
+                case 'MATCH': {
+                    this.succeeded = true;
+                    this.recordStep({
+                        pc, sp, groups: { ...groups },
+                        stack: this.copyStack(backtrackStack),
+                        action: 'success',
+                        description: `✅ 匹配成功! 匹配文本: '${escapeForDisplay(this.text.slice(startPos, sp))}'`,
+                        isBacktrack: false,
+                        matched: true
+                    });
+                    this.finished = true;
+                    return;
+                }
+            }
+
+            if (backtrackStack.length === 0) {
+                this.succeeded = false;
+                this.recordStep({
+                    pc, sp, groups: { ...groups },
+                    stack: [],
+                    action: 'fail',
+                    description: '❌ 匹配失败: 回溯栈为空，无法继续',
+                    isBacktrack: false
+                });
+                this.finished = true;
+                return;
+            }
+
+            const bt = backtrackStack.pop();
+            this.recordStep({
+                pc: bt.pc,
+                sp: bt.sp,
+                groups: { ...bt.groups },
+                stack: this.copyStack(backtrackStack),
+                action: 'backtrack',
+                description: `🔴 回溯: ${bt.reason || ''} 回退到指令 ${bt.pc}，文本位置 ${bt.sp}`,
+                isBacktrack: true
+            });
+            pc = bt.pc;
+            sp = bt.sp;
+            groups = { ...bt.groups };
+        }
+
+        this.finished = true;
+        if (!this.succeeded) {
+            this.recordStep({
+                pc, sp, groups: { ...groups },
+                stack: [],
+                action: 'fail',
+                description: '❌ 匹配失败: 超过最大步数',
+                isBacktrack: false
+            });
+        }
+    }
+
+    recordStep(step) {
+        this.steps.push(step);
+    }
+
+    copyStack(stack) {
+        return stack.map(s => ({
+            pc: s.pc,
+            sp: s.sp,
+            reason: s.reason,
+            groups: { ...s.groups }
+        }));
+    }
+
+    next() {
+        if (this.currentStepIndex < this.steps.length - 1) {
+            this.currentStepIndex++;
+            return this.steps[this.currentStepIndex];
+        }
+        return null;
+    }
+
+    reset() {
+        this.currentStepIndex = -1;
+    }
+
+    getCurrentStep() {
+        if (this.currentStepIndex >= 0 && this.currentStepIndex < this.steps.length) {
+            return this.steps[this.currentStepIndex];
+        }
+        return null;
+    }
+}
+
+function escapeForDisplay(ch) {
+    if (ch === '\n') return '\\n';
+    if (ch === '\r') return '\\r';
+    if (ch === '\t') return '\\t';
+    if (ch === ' ') return '␣';
+    if (ch === undefined) return '';
+    return ch;
+}
+
+// ============================================================
+// Step Debugger UI State
+// ============================================================
+
+let stepDebuggerState = {
+    stepper: null,
+    selectedMatchIndex: -1,
+    regexStr: '',
+    testStr: ''
+};
+
+function makeMatchesSelectable() {
+    const tbody = document.getElementById('matchesBody');
+    const rows = tbody.querySelectorAll('tr');
+    rows.forEach((row, idx) => {
+        row.style.cursor = 'pointer';
+        row.addEventListener('click', () => {
+            document.querySelectorAll('.matches-table tbody tr').forEach(r => r.classList.remove('selected-match'));
+            row.classList.add('selected-match');
+            stepDebuggerState.selectedMatchIndex = idx;
+            document.getElementById('startStepBtn').disabled = false;
+            const matches = getCurrentMatches();
+            if (matches && matches[idx]) {
+                document.getElementById('stepStatus').textContent =
+                    `已选择匹配 #${idx + 1} (位置 ${matches[idx].index})，点击"逐步执行"开始调试`;
+            }
+        });
+    });
+}
+
+let _currentMatches = [];
+function getCurrentMatches() {
+    return _currentMatches;
+}
+
+function renderStepDebuggerRegexDisplay(regexStr, tokenStart, tokenEnd) {
+    const el = document.getElementById('stepRegexDisplay');
+    if (!regexStr) { el.textContent = ''; return; }
+    let html = '';
+    for (let i = 0; i < regexStr.length; i++) {
+        const inToken = (i >= tokenStart && i < tokenEnd);
+        const ch = regexStr[i];
+        let displayCh = escapeHtml(ch);
+        if (ch === '\n') displayCh = '\\n';
+        if (ch === '\t') displayCh = '\\t';
+        if (inToken) {
+            html += `<span class="regex-token-highlight">${displayCh}</span>`;
+        } else {
+            html += `<span>${displayCh}</span>`;
+        }
+    }
+    if (tokenEnd >= regexStr.length && tokenStart === tokenEnd) {
+        html += `<span class="regex-token-highlight regex-caret">▌</span>`;
+    }
+    el.innerHTML = html;
+}
+
+function renderStepDebuggerTextDisplay(text, textPos, tokenStart, tokenEnd) {
+    const el = document.getElementById('stepTextDisplay');
+    if (!text) { el.textContent = ''; return; }
+    let html = '';
+    for (let i = 0; i < text.length; i++) {
+        const atCursor = (i === textPos);
+        const ch = text[i];
+        let displayCh = escapeHtml(ch);
+        if (ch === '\n') displayCh = '↵\n';
+        else if (ch === '\t') displayCh = '→   ';
+        else if (ch === ' ') displayCh = '&nbsp;';
+        if (atCursor) {
+            html += `<span class="text-cursor">▌</span>`;
+        }
+        html += `<span class="text-char" data-pos="${i}">${displayCh}</span>`;
+    }
+    if (textPos >= text.length) {
+        html += `<span class="text-cursor">▌</span>`;
+    }
+    el.innerHTML = html;
+}
+
+function renderStepDebuggerStack(stack, groups) {
+    const el = document.getElementById('stepStackDisplay');
+    let html = '';
+
+    html += '<div class="stack-section-title">分组捕获:</div>';
+    const groupNums = new Set();
+    for (const key of Object.keys(groups || {})) {
+        const m = key.match(/^(start|end)_(\d+)$/);
+        if (m) groupNums.add(m[2]);
+    }
+    const sortedGroupNums = Array.from(groupNums).sort((a, b) => parseInt(a) - parseInt(b));
+    if (sortedGroupNums.length === 0) {
+        html += '<div class="stack-empty">(无)</div>';
+    } else {
+        html += '<div class="groups-list">';
+        for (const gn of sortedGroupNums) {
+            const start = groups['start_' + gn];
+            const end = groups['end_' + gn];
+            let content = '';
+            if (start !== undefined && end !== undefined) {
+                content = escapeHtml(stepDebuggerState.testStr.slice(start, end));
+            } else if (start !== undefined) {
+                content = `<span style="color:#888;">(进行中, 起始: ${start})</span>`;
+            }
+            const colorIdx = (parseInt(gn) - 1) % GROUP_COLORS.length;
+            html += `<div class="group-capture-item" style="border-left-color:${GROUP_TEXT_COLORS[colorIdx]};">
+                <span class="group-capture-label" style="color:${GROUP_TEXT_COLORS[colorIdx]}">$${gn}</span>
+                <span class="group-capture-value">'${content}'</span>
+            </div>`;
+        }
+        html += '</div>';
+    }
+
+    html += '<div class="stack-section-title">回溯栈 (' + (stack ? stack.length : 0) + '):</div>';
+    if (!stack || stack.length === 0) {
+        html += '<div class="stack-empty">(空)</div>';
+    } else {
+        html += '<div class="backtrack-stack">';
+        for (let i = stack.length - 1; i >= 0; i--) {
+            const item = stack[i];
+            html += `<div class="stack-item">
+                <div class="stack-item-header">帧 ${stack.length - i}: ${escapeHtml(item.reason || '回溯点')}</div>
+                <div class="stack-item-details">指令: ${item.pc} | 文本位置: ${item.sp}</div>
+            </div>`;
+        }
+        html += '</div>';
+    }
+
+    el.innerHTML = html;
+}
+
+function renderStepDebuggerLog(steps, currentIndex) {
+    const el = document.getElementById('stepLogDisplay');
+    if (!steps || steps.length === 0) {
+        el.innerHTML = '<div class="log-empty">暂无执行日志</div>';
+        return;
+    }
+    let html = '';
+    const startIdx = Math.max(0, currentIndex - 20);
+    for (let i = startIdx; i <= currentIndex && i < steps.length; i++) {
+        const step = steps[i];
+        const isCurrent = (i === currentIndex);
+        let className = 'log-entry';
+        if (step.isBacktrack) className += ' log-backtrack';
+        if (isCurrent) className += ' log-current';
+        const icon = step.isBacktrack ? '🔴' :
+            step.action === 'success' ? '✅' :
+            step.action === 'fail' ? '❌' :
+            step.action === 'split' ? '🔀' :
+            step.action === 'jump' ? '➡️' :
+            step.action === 'group_start' ? '📌' :
+            step.action === 'group_end' ? '🏁' :
+            step.matched ? '🟢' : (step.action.startsWith('fail_') ? '🔴' : '▶️');
+        html += `<div class="${className}"><span class="log-step-num">${i + 1}.</span> <span class="log-icon">${icon}</span> ${escapeHtml(step.description)}</div>`;
+    }
+    el.innerHTML = html;
+    el.scrollTop = el.scrollHeight;
+}
+
+function updateStepDebuggerDisplay() {
+    const step = stepDebuggerState.stepper ? stepDebuggerState.stepper.getCurrentStep() : null;
+    const stepper = stepDebuggerState.stepper;
+
+    const stepCounter = document.getElementById('stepCounter');
+    const stepStatus = document.getElementById('stepStatus');
+
+    if (!stepper || !step) {
+        stepCounter.textContent = 'Step: 0';
+        renderStepDebuggerRegexDisplay(stepDebuggerState.regexStr, 0, 0);
+        renderStepDebuggerTextDisplay(stepDebuggerState.testStr, stepper ? stepper.startPos : 0);
+        renderStepDebuggerStack([], {});
+        document.getElementById('stepLogDisplay').innerHTML = '<div class="log-empty">点击"逐步执行"开始</div>';
+        return;
+    }
+
+    stepCounter.textContent = `Step: ${stepper.currentStepIndex + 1} / ${stepper.steps.length}`;
+
+    const instr = stepper.instructions[step.pc];
+    let tokenStart = 0, tokenEnd = 0;
+    if (instr) {
+        tokenStart = instr.tokenStart;
+        tokenEnd = instr.tokenEnd;
+    }
+
+    renderStepDebuggerRegexDisplay(stepDebuggerState.regexStr, tokenStart, tokenEnd);
+    renderStepDebuggerTextDisplay(stepDebuggerState.testStr, step.sp, tokenStart, tokenEnd);
+    renderStepDebuggerStack(step.stack, step.groups);
+    renderStepDebuggerLog(stepper.steps, stepper.currentStepIndex);
+
+    if (step.action === 'success') {
+        stepStatus.textContent = '✅ 匹配成功';
+        stepStatus.className = 'step-status status-success';
+    } else if (step.action === 'fail') {
+        stepStatus.textContent = '❌ 匹配失败';
+        stepStatus.className = 'step-status status-fail';
+    } else if (step.isBacktrack) {
+        stepStatus.textContent = '🔴 回溯中...';
+        stepStatus.className = 'step-status status-backtrack';
+    } else {
+        stepStatus.textContent = '▶ 调试中...';
+        stepStatus.className = 'step-status';
+    }
+}
+
+function startStepDebug() {
+    const regexStr = document.getElementById('regexInput').value;
+    const testStr = document.getElementById('testInput').value;
+    const matches = _currentMatches;
+    const matchIdx = stepDebuggerState.selectedMatchIndex;
+
+    if (matchIdx < 0 || !matches || !matches[matchIdx]) {
+        document.getElementById('stepStatus').textContent = '请先选择一个匹配';
+        return;
+    }
+
+    const startPos = matches[matchIdx].index;
+    stepDebuggerState.regexStr = regexStr;
+    stepDebuggerState.testStr = testStr;
+
+    try {
+        let ast = parseRegex(regexStr);
+        annotateAstWithPositions(ast, regexStr, 0);
+
+        const compiler = new NFACompiler(regexStr);
+        const instructions = compiler.compile(ast);
+
+        const stepper = new NFAStepper(instructions, testStr, startPos, regexStr);
+        stepper.run();
+
+        stepDebuggerState.stepper = stepper;
+        document.getElementById('stepNextBtn').disabled = false;
+        document.getElementById('stepResetBtn').disabled = false;
+
+        stepper.next();
+        updateStepDebuggerDisplay();
+    } catch (e) {
+        document.getElementById('stepStatus').textContent = '调试器错误: ' + e.message;
+        console.error(e);
+    }
+}
+
+function stepNext() {
+    if (!stepDebuggerState.stepper) return;
+    const nextStep = stepDebuggerState.stepper.next();
+    updateStepDebuggerDisplay();
+    const st = stepDebuggerState.stepper;
+    if (st.currentStepIndex >= st.steps.length - 1) {
+        document.getElementById('stepNextBtn').disabled = true;
+    }
+}
+
+function stepReset() {
+    if (!stepDebuggerState.stepper) return;
+    stepDebuggerState.stepper.reset();
+    document.getElementById('stepNextBtn').disabled = false;
+    stepDebuggerState.stepper.next();
+    updateStepDebuggerDisplay();
+}
+
+// ============================================================
+// Modified runMatch to track matches and make rows selectable
+// ============================================================
+
+const _originalRunMatch = runMatch;
+function patchedRunMatch() {
+    _originalRunMatch();
+    stepDebuggerState.selectedMatchIndex = -1;
+    stepDebuggerState.stepper = null;
+    document.getElementById('startStepBtn').disabled = true;
+    document.getElementById('stepNextBtn').disabled = true;
+    document.getElementById('stepResetBtn').disabled = true;
+    document.getElementById('stepStatus').textContent = '选择一个匹配后点击"逐步执行"';
+    document.getElementById('stepStatus').className = 'step-status';
+
+    const regexStr = document.getElementById('regexInput').value;
+    const testStr = document.getElementById('testInput').value;
+    const flags = getFlags();
+
+    _currentMatches = [];
+    if (regexStr) {
+        try {
+            const re = new RegExp(regexStr, flags.includes('g') ? flags : flags + 'g');
+            let m;
+            while ((m = re.exec(testStr)) !== null) {
+                _currentMatches.push(m);
+                if (!flags.includes('g')) break;
+                if (m.index === re.lastIndex) re.lastIndex++;
+            }
+        } catch (e) { }
+    }
+    makeMatchesSelectable();
+}
+
 document.addEventListener('DOMContentLoaded', function () {
     const regexInput = document.getElementById('regexInput');
     const testInput = document.getElementById('testInput');
@@ -660,6 +1601,9 @@ document.addEventListener('DOMContentLoaded', function () {
     const flagM = document.getElementById('flagM');
     const flagS = document.getElementById('flagS');
     const refreshAstBtn = document.getElementById('refreshAstBtn');
+    const startStepBtn = document.getElementById('startStepBtn');
+    const stepNextBtn = document.getElementById('stepNextBtn');
+    const stepResetBtn = document.getElementById('stepResetBtn');
 
     regexInput.value = '(\\w+)@(\\w+)\\.(\\w+)';
     testInput.value = 'Hello world!\nEmail: test@example.com\nAnother: user.name@company.org\nInvalid: not-an-email\nTest: hello123@test456.net';
@@ -672,16 +1616,19 @@ document.addEventListener('DOMContentLoaded', function () {
         };
     }
 
-    const debouncedRun = debounce(runMatch, 100);
+    const debouncedRun = debounce(patchedRunMatch, 100);
 
     regexInput.addEventListener('input', debouncedRun);
     testInput.addEventListener('input', debouncedRun);
-    flagG.addEventListener('change', runMatch);
-    flagI.addEventListener('change', runMatch);
-    flagM.addEventListener('change', runMatch);
-    flagS.addEventListener('change', runMatch);
+    flagG.addEventListener('change', patchedRunMatch);
+    flagI.addEventListener('change', patchedRunMatch);
+    flagM.addEventListener('change', patchedRunMatch);
+    flagS.addEventListener('change', patchedRunMatch);
     refreshAstBtn.addEventListener('click', refreshAst);
+    startStepBtn.addEventListener('click', startStepDebug);
+    stepNextBtn.addEventListener('click', stepNext);
+    stepResetBtn.addEventListener('click', stepReset);
 
-    runMatch();
+    patchedRunMatch();
     refreshAst();
 });

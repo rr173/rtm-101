@@ -82,6 +82,39 @@
                     </div>
                 </div>
 
+                <div class="section step-debug-section">
+                    <div class="section-header">
+                        <span class="section-title">单步调试</span>
+                        <div class="step-controls">
+                            <button id="startStepBtn" class="step-btn" disabled>▶ 逐步执行</button>
+                            <button id="stepNextBtn" class="step-btn" disabled>→ 下一步</button>
+                            <button id="stepResetBtn" class="step-btn" disabled>↺ 重置</button>
+                        </div>
+                    </div>
+                    <div class="step-debug-content">
+                        <div class="step-info-row">
+                            <div class="step-status" id="stepStatus">选择一个匹配后点击"逐步执行"</div>
+                            <div class="step-counter" id="stepCounter">Step: 0</div>
+                        </div>
+                        <div class="step-regex-view">
+                            <div class="step-subtitle">正则表达式 (光标位置)</div>
+                            <div class="regex-display" id="stepRegexDisplay"></div>
+                        </div>
+                        <div class="step-text-view">
+                            <div class="step-subtitle">测试文本 (光标位置)</div>
+                            <div class="text-display" id="stepTextDisplay"></div>
+                        </div>
+                        <div class="step-stack-view">
+                            <div class="step-subtitle">匹配栈</div>
+                            <div class="stack-display" id="stepStackDisplay"></div>
+                        </div>
+                        <div class="step-log-view">
+                            <div class="step-subtitle">执行日志</div>
+                            <div class="log-display" id="stepLogDisplay"></div>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="section ast-section">
                     <div class="section-header">
                         <span class="section-title">解析树 (AST)</span>

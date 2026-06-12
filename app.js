@@ -287,6 +287,26 @@ class PianoRollEditor {
         this.sheetMusicCanvas = null;
         this.sheetMusicCtx = null;
         this.sheetMusicContainer = null;
+
+        this.patterns = new Map();
+        this.arrangement = [];
+        this.arrangementCollapsed = false;
+        this.editingPatternId = null;
+        this.selectedArrangementItemId = null;
+        this.arrangementDragState = null;
+        this.defaultPatternBars = 4;
+        this.patternCounter = 0;
+        this.arrangementRowHeight = 40;
+
+        this.arrangementGridCanvas = null;
+        this.arrangementGridCtx = null;
+        this.arrangementRulerCanvas = null;
+        this.arrangementRulerCtx = null;
+        this.arrangementGridContainer = null;
+        this.arrangementGrid = null;
+        this.arrangementTrackLabels = null;
+        this.patternLibraryList = null;
+        this.contextMenuPatternItem = null;
         
         this.init();
     }
@@ -324,6 +344,16 @@ class PianoRollEditor {
         this.mixerResizer = document.getElementById('mixerResizer');
 
         this.loadMixerState();
+
+        this.arrangementGridCanvas = document.getElementById('arrangementGridCanvas');
+        this.arrangementGridCtx = this.arrangementGridCanvas ? this.arrangementGridCanvas.getContext('2d') : null;
+        this.arrangementRulerCanvas = document.getElementById('arrangementRulerCanvas');
+        this.arrangementRulerCtx = this.arrangementRulerCanvas ? this.arrangementRulerCanvas.getContext('2d') : null;
+        this.arrangementGridContainer = document.getElementById('arrangementGridContainer');
+        this.arrangementGrid = document.getElementById('arrangementGrid');
+        this.arrangementTrackLabels = document.getElementById('arrangementTrackLabels');
+        this.patternLibraryList = document.getElementById('patternLibraryList');
+        this.arrangementPanel = document.getElementById('arrangementPanel');
         
         this.createInitialTracks();
         this.loadDemoMelody();
@@ -351,6 +381,9 @@ class PianoRollEditor {
             this.resizeSheetMusicCanvas();
             this.renderSheetMusic();
             this.renderMixer();
+            this.resizeArrangementCanvas();
+            this.renderArrangement();
+            this.renderPatternLibrary();
         }, 100);
     }
     
@@ -385,30 +418,70 @@ class PianoRollEditor {
         const track = this.tracks[index];
         const trackCopy = JSON.parse(JSON.stringify(track));
         
+        const affectedPatternIds = [];
+        this.patterns.forEach((pattern, pid) => {
+            if (pattern.trackId === trackId) {
+                affectedPatternIds.push(pid);
+            }
+        });
+        const affectedArrangement = this.arrangement.filter(item =>
+            affectedPatternIds.includes(item.patternId) || item.trackId === trackId
+        );
+        const patternsCopy = new Map();
+        affectedPatternIds.forEach(pid => {
+            patternsCopy.set(pid, JSON.parse(JSON.stringify(this.patterns.get(pid))));
+        });
+        const arrangementCopy = JSON.parse(JSON.stringify(affectedArrangement));
+
+        affectedPatternIds.forEach(pid => this.patterns.delete(pid));
+        this.arrangement = this.arrangement.filter(item =>
+            !affectedPatternIds.includes(item.patternId) && item.trackId !== trackId
+        );
+
         this.tracks.splice(index, 1);
         if (this.activeTrackId === trackId) {
             this.activeTrackId = this.tracks[0].id;
             this.activeChannelId = this.tracks[0].activeChannelId;
         }
+        if (this.editingPatternId && affectedPatternIds.includes(this.editingPatternId)) {
+            this.editingPatternId = null;
+            document.getElementById('patternEditModeIndicator').classList.remove('show');
+        }
         this.selectedNotes.clear();
+        this.selectedArrangementItemId = null;
         this.renderTrackList();
         this.renderChannelSelect();
         this.render();
         this.renderVelocity();
+        this.resizeArrangementCanvas();
+        this.renderArrangement();
+        this.renderPatternLibrary();
         
         this.executeCommand({
             type: 'removeTrack',
             trackIndex: index,
             trackCopy,
             trackId,
+            affectedPatternIds,
+            patternsCopy: Array.from(patternsCopy.entries()),
+            arrangementCopy,
             undo: () => {
                 this.tracks.splice(index, 0, JSON.parse(JSON.stringify(trackCopy)));
                 this.activeTrackId = trackId;
                 this.activeChannelId = trackCopy.activeChannelId;
+                patternsCopy.forEach((pat, pid) => {
+                    this.patterns.set(pid, JSON.parse(JSON.stringify(pat)));
+                });
+                arrangementCopy.forEach(item => {
+                    this.arrangement.push(JSON.parse(JSON.stringify(item)));
+                });
                 this.renderTrackList();
                 this.renderChannelSelect();
                 this.render();
                 this.renderVelocity();
+                this.resizeArrangementCanvas();
+                this.renderArrangement();
+                this.renderPatternLibrary();
             },
             redo: () => {
                 const idx = this.tracks.findIndex(t => t.id === trackId);
@@ -419,11 +492,23 @@ class PianoRollEditor {
                         this.activeChannelId = this.tracks[0].activeChannelId;
                     }
                 }
+                affectedPatternIds.forEach(pid => this.patterns.delete(pid));
+                this.arrangement = this.arrangement.filter(item =>
+                    !affectedPatternIds.includes(item.patternId) && item.trackId !== trackId
+                );
+                if (this.editingPatternId && affectedPatternIds.includes(this.editingPatternId)) {
+                    this.editingPatternId = null;
+                    document.getElementById('patternEditModeIndicator').classList.remove('show');
+                }
                 this.selectedNotes.clear();
+                this.selectedArrangementItemId = null;
                 this.renderTrackList();
                 this.renderChannelSelect();
                 this.render();
                 this.renderVelocity();
+                this.resizeArrangementCanvas();
+                this.renderArrangement();
+                this.renderPatternLibrary();
             }
         });
     }
@@ -603,6 +688,8 @@ class PianoRollEditor {
                 this.renderTrackList();
                 this.render();
                 this.renderChannelSelect();
+                this.resizeArrangementCanvas();
+                this.renderArrangement();
             }
         });
         
@@ -846,7 +933,112 @@ class PianoRollEditor {
                 this.mixerResizer.classList.remove('dragging');
                 this.saveMixerState();
             }
+            if (this.arrangementDragState) {
+                this.finishArrangementDrag();
+            }
         });
+
+        document.getElementById('arrangementToggleBtn').addEventListener('click', () => {
+            this.toggleArrangementPanel();
+        });
+
+        document.getElementById('linearizeBtn').addEventListener('click', () => {
+            this.showLinearizeDialog();
+        });
+
+        document.getElementById('patternLengthSelect').addEventListener('change', (e) => {
+            this.defaultPatternBars = parseInt(e.target.value) / TICKS_PER_BAR;
+        });
+
+        document.querySelectorAll('#patternContextMenu .menu-item').forEach(item => {
+            item.addEventListener('click', () => {
+                const action = item.dataset.patternAction;
+                this.handlePatternContextMenuAction(action);
+            });
+        });
+
+        document.getElementById('createPatternOk').addEventListener('click', () => {
+            this.confirmCreatePattern();
+        });
+        document.getElementById('createPatternCancel').addEventListener('click', () => {
+            this.hideCreatePatternDialog();
+        });
+
+        document.getElementById('patternLoopOk').addEventListener('click', () => {
+            this.confirmPatternLoopCount();
+        });
+        document.getElementById('patternLoopCancel').addEventListener('click', () => {
+            this.hidePatternLoopDialog();
+        });
+
+        document.getElementById('patternGapOk').addEventListener('click', () => {
+            this.confirmPatternGapBeats();
+        });
+        document.getElementById('patternGapCancel').addEventListener('click', () => {
+            this.hidePatternGapDialog();
+        });
+
+        document.getElementById('linearizeOk').addEventListener('click', () => {
+            this.linearizeArrangement();
+            this.hideLinearizeDialog();
+        });
+        document.getElementById('linearizeCancel').addEventListener('click', () => {
+            this.hideLinearizeDialog();
+        });
+
+        if (this.arrangementGridCanvas) {
+            this.arrangementGridCanvas.addEventListener('mousedown', (e) => this.onArrangementMouseDown(e));
+            this.arrangementGridCanvas.addEventListener('mousemove', (e) => this.onArrangementMouseMove(e));
+            this.arrangementGridCanvas.addEventListener('mouseup', (e) => this.onArrangementMouseUp(e));
+            this.arrangementGridCanvas.addEventListener('mouseleave', () => this.onArrangementMouseUp());
+            this.arrangementGridCanvas.addEventListener('dblclick', (e) => this.onArrangementDoubleClick(e));
+            this.arrangementGridCanvas.addEventListener('contextmenu', (e) => this.onArrangementContextMenu(e));
+        }
+
+        if (this.arrangementGrid) {
+            this.arrangementGrid.addEventListener('scroll', () => {
+                this.scrollX = this.arrangementGrid.scrollLeft;
+                this.gridContainer.scrollLeft = this.scrollX;
+                this.rulerContainer.scrollLeft = this.scrollX;
+                this.automationCanvasContainer.scrollLeft = this.scrollX;
+                this.chordTrackContainer.scrollLeft = this.scrollX;
+                if (this.sheetMusicContainer) {
+                    this.sheetMusicContainer.scrollLeft = this.scrollX;
+                }
+                if (this.velocityCanvasContainer) {
+                    this.velocityCanvasContainer.scrollLeft = this.scrollX;
+                }
+                if (this.arrangementRulerCanvas) {
+                    this.arrangementRulerCanvas.parentElement.scrollLeft = this.scrollX;
+                }
+                this.renderArrangement();
+            });
+        }
+
+        if (this.arrangementRulerCanvas) {
+            this.arrangementRulerCanvas.addEventListener('click', (e) => this.onArrangementRulerClick(e));
+        }
+
+        if (this.arrangementGrid) {
+            this.arrangementGrid.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                this.onArrangementMouseMove(e);
+            });
+            this.arrangementGrid.addEventListener('drop', (e) => {
+                e.preventDefault();
+                if (this.arrangementDragState && this.arrangementDragState.type === 'dropPreview') {
+                    const preview = this.arrangementDragState;
+                    this.addPatternToArrangement(preview.patternId, preview.trackId, preview.startTick, 1, 0);
+                    this.resizeArrangementCanvas();
+                    this.arrangementDragState = null;
+                    this.renderArrangement();
+                }
+            });
+        }
+
+        if (this.arrangementPanel) {
+            this.arrangementPanel.addEventListener('wheel', (e) => this.onWheel(e), { passive: false });
+        }
     }
 
     toggleDropdown(menuId) {
@@ -1266,6 +1458,7 @@ class PianoRollEditor {
         this.resizeVelocityCanvas();
         this.resizeChordTrackCanvas();
         this.resizeSheetMusicCanvas();
+        this.resizeArrangementCanvas();
         
         this.render();
         this.renderRuler();
@@ -1273,6 +1466,7 @@ class PianoRollEditor {
         this.renderVelocity();
         this.renderChordTrack();
         this.renderSheetMusic();
+        this.renderArrangement();
     }
     
     resizeVelocityCanvas() {
@@ -1756,9 +1950,18 @@ class PianoRollEditor {
         
         this.tracks.forEach(track => {
             const isActiveTrack = track.id === this.activeTrackId;
-            track.notes.forEach(note => {
-                this.renderNote(note, track.color, isActiveTrack);
-            });
+            if (this.editingPatternId) {
+                const pattern = this.patterns.get(this.editingPatternId);
+                if (pattern && pattern.trackId === track.id) {
+                    pattern.notes.forEach(note => {
+                        this.renderNote(note, track.color, isActiveTrack);
+                    });
+                }
+            } else {
+                track.notes.forEach(note => {
+                    this.renderNote(note, track.color, isActiveTrack);
+                });
+            }
         });
         
         if (this.selectionBox) {
@@ -2041,6 +2244,20 @@ class PianoRollEditor {
     findNoteAt(x, y) {
         const tick = this.pixelToTick(x);
         const pitch = this.pixelToPitch(y);
+
+        if (this.editingPatternId) {
+            const pattern = this.patterns.get(this.editingPatternId);
+            if (pattern && pattern.trackId === this.activeTrackId) {
+                for (const note of pattern.notes) {
+                    if (note.pitch === pitch &&
+                        tick >= note.startTick &&
+                        tick < note.startTick + note.durationTicks) {
+                        return note;
+                    }
+                }
+            }
+            return null;
+        }
         
         for (const track of this.tracks) {
             if (track.id !== this.activeTrackId) continue;
@@ -2062,6 +2279,13 @@ class PianoRollEditor {
     }
     
     findNoteById(id) {
+        if (this.editingPatternId) {
+            const pattern = this.patterns.get(this.editingPatternId);
+            if (pattern) {
+                const note = pattern.notes.find(n => n.id === id);
+                if (note) return note;
+            }
+        }
         for (const track of this.tracks) {
             const note = track.notes.find(n => n.id === id);
             if (note) return note;
@@ -2193,19 +2417,28 @@ class PianoRollEditor {
             };
             
             this.selectedNotes.clear();
-            const activeTrack = this.tracks.find(t => t.id === this.activeTrackId);
-            if (activeTrack) {
-                activeTrack.notes.forEach(note => {
-                    const noteX = note.startTick * this.cellWidth;
-                    const noteY = (MAX_PITCH - note.pitch) * this.cellHeight;
-                    const noteW = note.durationTicks * this.cellWidth;
-                    const noteH = this.cellHeight;
-                    
-                    if (this.rectsIntersect(this.selectionBox, { x: noteX, y: noteY, width: noteW, height: noteH })) {
-                        this.selectedNotes.add(note.id);
-                    }
-                });
+            let noteSource = [];
+            if (this.editingPatternId) {
+                const pattern = this.patterns.get(this.editingPatternId);
+                if (pattern && pattern.trackId === this.activeTrackId) {
+                    noteSource = pattern.notes;
+                }
+            } else {
+                const activeTrack = this.tracks.find(t => t.id === this.activeTrackId);
+                if (activeTrack) {
+                    noteSource = activeTrack.notes;
+                }
             }
+            noteSource.forEach(note => {
+                const noteX = note.startTick * this.cellWidth;
+                const noteY = (MAX_PITCH - note.pitch) * this.cellHeight;
+                const noteW = note.durationTicks * this.cellWidth;
+                const noteH = this.cellHeight;
+                
+                if (this.rectsIntersect(this.selectionBox, { x: noteX, y: noteY, width: noteW, height: noteH })) {
+                    this.selectedNotes.add(note.id);
+                }
+            });
             this.render();
         }
     }
@@ -2222,30 +2455,41 @@ class PianoRollEditor {
                 durationTicks: this.dragState.durationTicks,
                 velocity: 100
             };
+
+            const isPatternEdit = !!this.editingPatternId;
+            const getNoteContainer = () => {
+                if (isPatternEdit) {
+                    return this.patterns.get(this.editingPatternId).notes;
+                }
+                return this.tracks.find(t => t.id === note.track).notes;
+            };
             
             this.executeCommand({
                 type: 'addNote',
                 note,
                 undo: () => {
-                    const track = this.tracks.find(t => t.id === note.track);
-                    const idx = track.notes.findIndex(n => n.id === note.id);
-                    if (idx !== -1) track.notes.splice(idx, 1);
+                    const notes = getNoteContainer();
+                    const idx = notes.findIndex(n => n.id === note.id);
+                    if (idx !== -1) notes.splice(idx, 1);
                     this.selectedNotes.delete(note.id);
                     this.render();
+                    if (isPatternEdit) this.renderArrangement();
                 },
                 redo: () => {
-                    const track = this.tracks.find(t => t.id === note.track);
-                    track.notes.push(note);
+                    const notes = getNoteContainer();
+                    notes.push(note);
                     this.selectedNotes.clear();
                     this.selectedNotes.add(note.id);
                     this.render();
+                    if (isPatternEdit) this.renderArrangement();
                 }
             });
             
-            const track = this.tracks.find(t => t.id === this.activeTrackId);
-            track.notes.push(note);
+            const notes = getNoteContainer();
+            notes.push(note);
             this.selectedNotes.clear();
             this.selectedNotes.add(note.id);
+            if (isPatternEdit) this.renderArrangement();
         } else if (this.dragState.type === 'move') {
             const movedNotes = this.dragState.notePositions.map(({ note, startTick, startPitch }) => ({
                 noteId: note.id,
@@ -2364,6 +2608,9 @@ class PianoRollEditor {
             case 'paste':
                 this.pasteNotes();
                 break;
+            case 'createPattern':
+                this.showCreatePatternDialog();
+                break;
             case 'delete':
                 this.deleteSelectedNotes();
                 break;
@@ -2393,6 +2640,9 @@ class PianoRollEditor {
     
     setSelectedNotesVelocity(velocity) {
         if (this.selectedNotes.size === 0) return;
+
+        const isPatternEdit = !!this.editingPatternId;
+        const patternId = this.editingPatternId;
         
         const velocityChanges = [];
         this.selectedNotes.forEach(noteId => {
@@ -2402,7 +2652,9 @@ class PianoRollEditor {
                     noteId: note.id,
                     trackId: note.track,
                     oldVelocity: note.velocity,
-                    newVelocity: velocity
+                    newVelocity: velocity,
+                    isPatternEdit,
+                    patternId
                 });
                 note.velocity = velocity;
             }
@@ -2412,31 +2664,46 @@ class PianoRollEditor {
             type: 'changeVelocity',
             velocityChanges,
             undo: () => {
-                velocityChanges.forEach(({ noteId, trackId, oldVelocity }) => {
-                    const track = this.tracks.find(t => t.id === trackId);
-                    if (!track) return;
-                    const n = track.notes.find(x => x.id === noteId);
+                velocityChanges.forEach(({ noteId, trackId, oldVelocity, isPatternEdit: patEdit, patternId: patId }) => {
+                    let noteArray;
+                    if (patEdit) {
+                        noteArray = this.patterns.get(patId).notes;
+                    } else {
+                        const track = this.tracks.find(t => t.id === trackId);
+                        if (!track) return;
+                        noteArray = track.notes;
+                    }
+                    const n = noteArray.find(x => x.id === noteId);
                     if (!n) return;
                     n.velocity = oldVelocity;
                 });
                 this.render();
                 this.renderVelocity();
+                if (isPatternEdit) this.renderArrangement();
             },
             redo: () => {
-                velocityChanges.forEach(({ noteId, trackId, newVelocity }) => {
-                    const track = this.tracks.find(t => t.id === trackId);
-                    if (!track) return;
-                    const n = track.notes.find(x => x.id === noteId);
+                velocityChanges.forEach(({ noteId, trackId, newVelocity, isPatternEdit: patEdit, patternId: patId }) => {
+                    let noteArray;
+                    if (patEdit) {
+                        noteArray = this.patterns.get(patId).notes;
+                    } else {
+                        const track = this.tracks.find(t => t.id === trackId);
+                        if (!track) return;
+                        noteArray = track.notes;
+                    }
+                    const n = noteArray.find(x => x.id === noteId);
                     if (!n) return;
                     n.velocity = newVelocity;
                 });
                 this.render();
                 this.renderVelocity();
+                if (isPatternEdit) this.renderArrangement();
             }
         });
         
         this.render();
         this.renderVelocity();
+        if (isPatternEdit) this.renderArrangement();
     }
     
     copySelectedNotes() {
@@ -2448,6 +2715,9 @@ class PianoRollEditor {
     
     pasteNotes() {
         if (this.copiedNotes.length === 0) return;
+
+        const isPatternEdit = !!this.editingPatternId;
+        const patternId = this.editingPatternId;
         
         const minTick = Math.min(...this.copiedNotes.map(n => n.startTick));
         const offsetTick = this.playTick - minTick;
@@ -2458,39 +2728,53 @@ class PianoRollEditor {
             track: this.activeTrackId,
             startTick: Math.max(0, note.startTick + offsetTick)
         }));
-        
-        const track = this.tracks.find(t => t.id === this.activeTrackId);
+
+        const getNoteArray = () => {
+            if (isPatternEdit) {
+                return this.patterns.get(patternId).notes;
+            }
+            return this.tracks.find(t => t.id === this.activeTrackId).notes;
+        };
         
         this.executeCommand({
             type: 'pasteNotes',
             newNotes,
             trackId: this.activeTrackId,
+            isPatternEdit,
+            patternId,
             undo: () => {
-                const t = this.tracks.find(track => track.id === this.activeTrackId);
+                const notes = getNoteArray();
                 newNotes.forEach(note => {
-                    const idx = t.notes.findIndex(n => n.id === note.id);
-                    if (idx !== -1) t.notes.splice(idx, 1);
+                    const idx = notes.findIndex(n => n.id === note.id);
+                    if (idx !== -1) notes.splice(idx, 1);
                     this.selectedNotes.delete(note.id);
                 });
                 this.render();
+                if (isPatternEdit) this.renderArrangement();
             },
             redo: () => {
-                const t = this.tracks.find(track => track.id === this.activeTrackId);
-                newNotes.forEach(note => t.notes.push(note));
+                const notes = getNoteArray();
+                newNotes.forEach(note => notes.push(note));
                 this.selectedNotes.clear();
                 newNotes.forEach(note => this.selectedNotes.add(note.id));
                 this.render();
+                if (isPatternEdit) this.renderArrangement();
             }
         });
         
-        newNotes.forEach(note => track.notes.push(note));
+        const noteArray = getNoteArray();
+        newNotes.forEach(note => noteArray.push(note));
         this.selectedNotes.clear();
         newNotes.forEach(note => this.selectedNotes.add(note.id));
         this.render();
+        if (isPatternEdit) this.renderArrangement();
     }
     
     deleteSelectedNotes() {
         if (this.selectedNotes.size === 0) return;
+
+        const isPatternEdit = !!this.editingPatternId;
+        const patternId = this.editingPatternId;
         
         const deletedNotes = [];
         this.selectedNotes.forEach(noteId => {
@@ -2499,11 +2783,19 @@ class PianoRollEditor {
                 deletedNotes.push({
                     noteData: JSON.parse(JSON.stringify(note)),
                     noteId: note.id,
-                    trackId: note.track
+                    trackId: note.track,
+                    isPatternEdit,
+                    patternId
                 });
-                const track = this.tracks.find(t => t.id === note.track);
-                const idx = track.notes.findIndex(n => n.id === noteId);
-                if (idx !== -1) track.notes.splice(idx, 1);
+                let noteArray;
+                if (isPatternEdit) {
+                    noteArray = this.patterns.get(patternId).notes;
+                } else {
+                    const track = this.tracks.find(t => t.id === note.track);
+                    noteArray = track.notes;
+                }
+                const idx = noteArray.findIndex(n => n.id === noteId);
+                if (idx !== -1) noteArray.splice(idx, 1);
             }
         });
         
@@ -2511,29 +2803,44 @@ class PianoRollEditor {
             type: 'deleteNotes',
             deletedNotes,
             undo: () => {
-                deletedNotes.forEach(({ noteData, trackId }) => {
-                    const track = this.tracks.find(t => t.id === trackId);
-                    if (!track) return;
-                    track.notes.push(JSON.parse(JSON.stringify(noteData)));
+                deletedNotes.forEach(({ noteData, trackId, isPatternEdit: patEdit, patternId: patId }) => {
+                    let noteArray;
+                    if (patEdit) {
+                        noteArray = this.patterns.get(patId).notes;
+                    } else {
+                        const track = this.tracks.find(t => t.id === trackId);
+                        if (!track) return;
+                        noteArray = track.notes;
+                    }
+                    noteArray.push(JSON.parse(JSON.stringify(noteData)));
                 });
                 this.render();
                 this.renderVelocity();
+                if (isPatternEdit) this.renderArrangement();
             },
             redo: () => {
-                deletedNotes.forEach(({ noteId, trackId }) => {
-                    const track = this.tracks.find(t => t.id === trackId);
-                    if (!track) return;
-                    const idx = track.notes.findIndex(n => n.id === noteId);
-                    if (idx !== -1) track.notes.splice(idx, 1);
+                deletedNotes.forEach(({ noteId, trackId, isPatternEdit: patEdit, patternId: patId }) => {
+                    let noteArray;
+                    if (patEdit) {
+                        noteArray = this.patterns.get(patId).notes;
+                    } else {
+                        const track = this.tracks.find(t => t.id === trackId);
+                        if (!track) return;
+                        noteArray = track.notes;
+                    }
+                    const idx = noteArray.findIndex(n => n.id === noteId);
+                    if (idx !== -1) noteArray.splice(idx, 1);
                 });
                 this.selectedNotes.clear();
                 this.render();
                 this.renderVelocity();
+                if (isPatternEdit) this.renderArrangement();
             }
         });
         
         this.selectedNotes.clear();
         this.render();
+        if (isPatternEdit) this.renderArrangement();
     }
     
     splitSelectedNotes() {
@@ -2860,8 +3167,14 @@ class PianoRollEditor {
             e.preventDefault();
             this.pasteNotes();
         } else if (e.key === 'Escape') {
-            this.selectedNotes.clear();
-            this.render();
+            if (this.editingPatternId) {
+                this.exitPatternEditMode();
+            } else {
+                this.selectedNotes.clear();
+                this.selectedArrangementItemId = null;
+                this.render();
+                this.renderArrangement();
+            }
         } else if (!this.isRecording && e.key.toLowerCase() === 's' && !e.ctrlKey && !e.metaKey) {
             e.preventDefault();
             this.splitSelectedNotes();
@@ -3946,24 +4259,25 @@ class PianoRollEditor {
             const currentTick = Math.floor(newTick);
             
             for (let tick = oldTick + 1; tick <= currentTick; tick++) {
-                this.tracks.forEach(track => {
+                const notesToPlay = this.getNotesAtTick(tick);
+                notesToPlay.forEach(({ note, track }) => {
                     if (track.muted) return;
                     if (hasSolo && !track.solo) return;
-                    
-                    track.notes.forEach(note => {
-                        if (note.startTick === tick) {
-                            const oscId = this.playNote(note.pitch, note.velocity, null, track.id, tick);
-                            activeNotes.set(note.id, oscId);
+
+                    const noteKey = `${note.id}_${tick}`;
+                    if (note.startTick === tick || (note._playStartTick !== undefined && note._playStartTick === tick)) {
+                        const oscId = this.playNote(note.pitch, note.velocity, null, track.id, tick);
+                        activeNotes.set(noteKey, oscId);
+                    }
+
+                    const noteEndTick = (note._playStartTick !== undefined ? note._playStartTick : note.startTick) + note.durationTicks;
+                    if (noteEndTick === tick) {
+                        const oscId = activeNotes.get(noteKey);
+                        if (oscId) {
+                            this.stopNote(oscId);
+                            activeNotes.delete(noteKey);
                         }
-                        
-                        if (note.startTick + note.durationTicks === tick) {
-                            const oscId = activeNotes.get(note.id);
-                            if (oscId) {
-                                this.stopNote(oscId);
-                                activeNotes.delete(note.id);
-                            }
-                        }
-                    });
+                    }
                 });
                 
                 if (this.metronomeEnabled) {
@@ -4059,17 +4373,36 @@ class PianoRollEditor {
     
     getMaxTick() {
         let max = 0;
-        this.tracks.forEach(track => {
-            track.notes.forEach(note => {
-                const end = note.startTick + note.durationTicks;
-                if (end > max) max = end;
+        if (this.editingPatternId) {
+            const pattern = this.patterns.get(this.editingPatternId);
+            if (pattern) {
+                pattern.notes.forEach(note => {
+                    const end = note.startTick + note.durationTicks;
+                    if (end > max) max = end;
+                });
+                max = Math.max(max, pattern.durationTicks);
+            }
+        } else if (this.arrangement.length > 0) {
+            this.arrangement.forEach(item => {
+                const pattern = this.patterns.get(item.patternId);
+                if (pattern) {
+                    const itemEnd = item.startTick + pattern.durationTicks * item.loopCount + item.gapTicks;
+                    if (itemEnd > max) max = itemEnd;
+                }
             });
-            track.automationChannels.forEach(channel => {
-                channel.points.forEach(point => {
-                    if (point.tick > max) max = point.tick;
+        } else {
+            this.tracks.forEach(track => {
+                track.notes.forEach(note => {
+                    const end = note.startTick + note.durationTicks;
+                    if (end > max) max = end;
+                });
+                track.automationChannels.forEach(channel => {
+                    channel.points.forEach(point => {
+                        if (point.tick > max) max = point.tick;
+                    });
                 });
             });
-        });
+        }
         if (this.isPlaying || this.isRecording) {
             max = Math.max(max, Math.ceil(this.playTick) + TICKS_PER_BAR * 2);
         }
@@ -5086,6 +5419,810 @@ class MidiParser {
                 velocity: noteOn.velocity
             });
         }
+    }
+
+    getNotesAtTick(tick) {
+        const result = [];
+
+        if (this.editingPatternId) {
+            const pattern = this.patterns.get(this.editingPatternId);
+            if (pattern) {
+                const track = this.tracks.find(t => t.id === pattern.trackId);
+                if (track) {
+                    pattern.notes.forEach(note => {
+                        if (note.startTick <= tick && tick < note.startTick + note.durationTicks) {
+                            result.push({ note, track });
+                        }
+                    });
+                }
+            }
+            return result;
+        }
+
+        if (this.arrangement.length > 0) {
+            this.arrangement.forEach(item => {
+                const pattern = this.patterns.get(item.patternId);
+                if (!pattern) return;
+                const track = this.tracks.find(t => t.id === pattern.trackId);
+                if (!track) return;
+
+                const patternDuration = pattern.durationTicks;
+                for (let loop = 0; loop < item.loopCount; loop++) {
+                    const loopStart = item.startTick + loop * patternDuration;
+                    const loopEnd = loopStart + patternDuration;
+                    if (tick >= loopStart && tick < loopEnd) {
+                        const relativeTick = tick - loopStart;
+                        pattern.notes.forEach(note => {
+                            if (note.startTick <= relativeTick && relativeTick < note.startTick + note.durationTicks) {
+                                const virtualNote = {
+                                    ...note,
+                                    _playStartTick: loopStart + note.startTick
+                                };
+                                result.push({ note: virtualNote, track });
+                            }
+                        });
+                    }
+                }
+            });
+            return result;
+        }
+
+        this.tracks.forEach(track => {
+            track.notes.forEach(note => {
+                if (note.startTick <= tick && tick < note.startTick + note.durationTicks) {
+                    result.push({ note, track });
+                }
+            });
+        });
+        return result;
+    }
+
+    toggleArrangementPanel() {
+        this.arrangementCollapsed = !this.arrangementCollapsed;
+        const panel = document.getElementById('arrangementPanel');
+        const btn = document.getElementById('arrangementToggleBtn');
+        if (this.arrangementCollapsed) {
+            panel.classList.add('collapsed');
+            btn.querySelector('.btn-arrow').style.transform = 'rotate(-90deg)';
+            btn.querySelector('.btn-arrow').style.display = 'inline-block';
+        } else {
+            panel.classList.remove('collapsed');
+            btn.querySelector('.btn-arrow').style.transform = '';
+            setTimeout(() => {
+                this.resizeArrangementCanvas();
+                this.renderArrangement();
+            }, 50);
+        }
+    }
+
+    resizeArrangementCanvas() {
+        if (!this.arrangementGridCanvas || !this.arrangementGrid) return;
+
+        const gridWidth = Math.max(this.getMaxTick() * this.cellWidth, this.arrangementGrid.clientWidth);
+        const gridHeight = this.tracks.length * this.arrangementRowHeight;
+
+        this.arrangementGridCanvas.width = gridWidth;
+        this.arrangementGridCanvas.height = Math.max(gridHeight, this.arrangementGrid.clientHeight - 20);
+
+        if (this.arrangementRulerCanvas) {
+            this.arrangementRulerCanvas.width = gridWidth;
+            this.arrangementRulerCanvas.height = 28;
+        }
+
+        if (this.arrangementTrackLabels) {
+            this.arrangementTrackLabels.style.height = `${this.arrangementGridCanvas.height}px`;
+        }
+    }
+
+    renderArrangement() {
+        if (!this.arrangementGridCtx) return;
+
+        const ctx = this.arrangementGridCtx;
+        const width = this.arrangementGridCanvas.width;
+        const height = this.arrangementGridCanvas.height;
+
+        ctx.fillStyle = '#252525';
+        ctx.fillRect(0, 0, width, height);
+
+        this.tracks.forEach((track, idx) => {
+            const y = idx * this.arrangementRowHeight;
+            ctx.fillStyle = idx % 2 === 0 ? '#2a2a2a' : '#272727';
+            ctx.fillRect(0, y, width, this.arrangementRowHeight);
+
+            ctx.strokeStyle = '#3d3d3d';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(0, y);
+            ctx.lineTo(width, y);
+            ctx.stroke();
+        });
+
+        const totalTicks = Math.ceil(width / this.cellWidth);
+        for (let tick = 0; tick <= totalTicks; tick++) {
+            const x = tick * this.cellWidth;
+            const isBar = tick % TICKS_PER_BAR === 0;
+            const isBeat = tick % TICKS_PER_BEAT === 0;
+
+            ctx.strokeStyle = isBar ? '#444' : isBeat ? '#353535' : '#2d2d2d';
+            ctx.lineWidth = isBar ? 1.5 : 1;
+            ctx.beginPath();
+            ctx.moveTo(x, 0);
+            ctx.lineTo(x, height);
+            ctx.stroke();
+        }
+
+        this.arrangement.forEach(item => {
+            this.renderArrangementItem(item);
+        });
+
+        if (this.arrangementDragState && this.arrangementDragState.type === 'dropPreview') {
+            const preview = this.arrangementDragState;
+            const trackIdx = this.tracks.findIndex(t => t.id === preview.trackId);
+            if (trackIdx >= 0) {
+                const pattern = this.patterns.get(preview.patternId);
+                if (pattern) {
+                    const y = trackIdx * this.arrangementRowHeight + 2;
+                    const w = pattern.durationTicks * this.cellWidth - 4;
+                    const h = this.arrangementRowHeight - 4;
+                    ctx.fillStyle = 'rgba(74, 158, 255, 0.3)';
+                    ctx.strokeStyle = 'rgba(74, 158, 255, 0.8)';
+                    ctx.lineWidth = 2;
+                    ctx.fillRect(preview.startTick * this.cellWidth + 2, y, w, h);
+                    ctx.strokeRect(preview.startTick * this.cellWidth + 2, y, w, h);
+                }
+            }
+        }
+
+        const playX = this.playTick * this.cellWidth;
+        ctx.strokeStyle = '#ff6b6b';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(playX, 0);
+        ctx.lineTo(playX, height);
+        ctx.stroke();
+
+        this.renderArrangementRuler();
+        this.renderArrangementTrackLabels();
+
+        if (this.patterns.size === 0 && this.arrangement.length === 0) {
+            ctx.fillStyle = '#555';
+            ctx.font = '13px sans-serif';
+            ctx.textAlign = 'center';
+            const hint = '在钢琴卷帘中选择音符，右键"创建Pattern"开始编排';
+            ctx.fillText(hint, width / 2, height / 2);
+        }
+    }
+
+    renderArrangementRuler() {
+        if (!this.arrangementRulerCtx) return;
+        const ctx = this.arrangementRulerCtx;
+        const width = this.arrangementRulerCanvas.width;
+        const height = this.arrangementRulerCanvas.height;
+
+        ctx.fillStyle = '#2d2d2d';
+        ctx.fillRect(0, 0, width, height);
+
+        ctx.fillStyle = '#a0a0a0';
+        ctx.font = '10px sans-serif';
+        ctx.textAlign = 'left';
+
+        const totalBars = Math.ceil(width / (this.cellWidth * TICKS_PER_BAR));
+        for (let bar = 0; bar <= totalBars; bar++) {
+            const x = bar * TICKS_PER_BAR * this.cellWidth;
+            ctx.strokeStyle = '#555';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(x, 0);
+            ctx.lineTo(x, height);
+            ctx.stroke();
+            ctx.fillText(`${bar + 1}`, x + 4, height - 8);
+        }
+    }
+
+    renderArrangementTrackLabels() {
+        if (!this.arrangementTrackLabels) return;
+        this.arrangementTrackLabels.innerHTML = '';
+
+        this.tracks.forEach((track, idx) => {
+            const label = document.createElement('div');
+            label.className = 'arrangement-track-label';
+            label.style.top = `${idx * this.arrangementRowHeight}px`;
+
+            label.innerHTML = `
+                <div class="arrangement-track-label-color" style="background-color: ${track.color}"></div>
+                <div class="arrangement-track-label-name">${track.name}</div>
+            `;
+
+            this.arrangementTrackLabels.appendChild(label);
+        });
+    }
+
+    renderArrangementItem(item) {
+        if (!this.arrangementGridCtx) return;
+        const pattern = this.patterns.get(item.patternId);
+        if (!pattern) return;
+
+        const ctx = this.arrangementGridCtx;
+        const trackIdx = this.tracks.findIndex(t => t.id === pattern.trackId);
+        if (trackIdx < 0) return;
+
+        const track = this.tracks[trackIdx];
+        const y = trackIdx * this.arrangementRowHeight + 2;
+        const totalWidth = pattern.durationTicks * item.loopCount * this.cellWidth + item.gapTicks * this.cellWidth - 4;
+        const h = this.arrangementRowHeight - 4;
+
+        for (let loop = 0; loop < item.loopCount; loop++) {
+            const loopX = item.startTick * this.cellWidth + loop * pattern.durationTicks * this.cellWidth + 2;
+            const loopW = pattern.durationTicks * this.cellWidth - 4;
+
+            ctx.fillStyle = this.adjustColorBrightness(track.color, -20);
+            this.drawRoundRect(ctx, loopX, y, loopW, h, 4);
+            ctx.fill();
+
+            ctx.fillStyle = this.adjustColorBrightness(track.color, 10);
+            this.drawRoundRect(ctx, loopX, y, loopW, 18, 4);
+            ctx.fill();
+
+            ctx.fillStyle = '#fff';
+            ctx.font = 'bold 10px sans-serif';
+            ctx.textAlign = 'left';
+            ctx.textBaseline = 'top';
+            const displayName = item.loopCount > 1 ? `${pattern.name} (x${loop + 1})` : pattern.name;
+            ctx.fillText(displayName, loopX + 6, y + 4);
+
+            const contentTop = y + 20;
+            const contentHeight = h - 20;
+            if (contentHeight > 4 && pattern.notes.length > 0) {
+                const pitches = pattern.notes.map(n => n.pitch);
+                const minP = Math.min(...pitches);
+                const maxP = Math.max(...pitches);
+                const pitchRange = Math.max(1, maxP - minP);
+
+                pattern.notes.forEach(note => {
+                    const noteX = loopX + (note.startTick / pattern.durationTicks) * loopW;
+                    const noteW = Math.max(2, (note.durationTicks / pattern.durationTicks) * loopW - 1);
+                    const noteY = contentTop + ((maxP - note.pitch) / pitchRange) * (contentHeight - 4);
+                    const noteH = Math.max(2, contentHeight / Math.max(8, pitchRange));
+
+                    ctx.fillStyle = this.adjustColorBrightness(track.color, 30);
+                    ctx.fillRect(noteX, noteY, noteW, noteH);
+                });
+            }
+        }
+
+        if (item.gapTicks > 0) {
+            const gapX = item.startTick * this.cellWidth + pattern.durationTicks * item.loopCount * this.cellWidth + 2;
+            const gapW = item.gapTicks * this.cellWidth - 4;
+            ctx.fillStyle = 'rgba(255, 107, 107, 0.15)';
+            ctx.fillRect(gapX, y, gapW, h);
+            ctx.strokeStyle = 'rgba(255, 107, 107, 0.4)';
+            ctx.setLineDash([4, 4]);
+            ctx.strokeRect(gapX, y, gapW, h);
+            ctx.setLineDash([]);
+        }
+
+        if (this.selectedArrangementItemId === item.id) {
+            ctx.strokeStyle = '#ffd93d';
+            ctx.lineWidth = 2;
+            this.drawRoundRect(ctx, item.startTick * this.cellWidth, y, totalWidth, h, 4);
+            ctx.stroke();
+        }
+        if (this.editingPatternId === pattern.id) {
+            ctx.strokeStyle = '#6bcb77';
+            ctx.lineWidth = 2;
+            ctx.setLineDash([5, 3]);
+            this.drawRoundRect(ctx, item.startTick * this.cellWidth, y, totalWidth, h, 4);
+            ctx.stroke();
+            ctx.setLineDash([]);
+        }
+    }
+
+    adjustColorBrightness(hex, amount) {
+        const num = parseInt(hex.replace('#', ''), 16);
+        const r = Math.max(0, Math.min(255, (num >> 16) + amount));
+        const g = Math.max(0, Math.min(255, ((num >> 8) & 0x00FF) + amount));
+        const b = Math.max(0, Math.min(255, (num & 0x0000FF) + amount));
+        return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, '0')}`;
+    }
+
+    drawRoundRect(ctx, x, y, w, h, r) {
+        ctx.beginPath();
+        ctx.moveTo(x + r, y);
+        ctx.lineTo(x + w - r, y);
+        ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+        ctx.lineTo(x + w, y + h - r);
+        ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+        ctx.lineTo(x + r, y + h);
+        ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+        ctx.lineTo(x, y + r);
+        ctx.quadraticCurveTo(x, y, x + r, y);
+        ctx.closePath();
+    }
+
+    renderPatternLibrary() {
+        if (!this.patternLibraryList) return;
+        this.patternLibraryList.innerHTML = '';
+
+        if (this.patterns.size === 0) {
+            const empty = document.createElement('div');
+            empty.style.cssText = 'color: #666; font-size: 11px; padding: 8px; text-align: center;';
+            empty.textContent = '暂无Pattern\n选择音符后右键创建';
+            empty.style.whiteSpace = 'pre-line';
+            this.patternLibraryList.appendChild(empty);
+            return;
+        }
+
+        this.patterns.forEach(pattern => {
+            const track = this.tracks.find(t => t.id === pattern.trackId);
+            const item = document.createElement('div');
+            item.className = 'pattern-library-item';
+            item.draggable = true;
+            item.dataset.patternId = pattern.id;
+
+            item.innerHTML = `
+                <div class="pattern-library-item-info">
+                    <div class="pattern-library-item-color" style="background-color: ${track ? track.color : '#888'}"></div>
+                    <div class="pattern-library-item-name">${pattern.name}</div>
+                </div>
+                <div class="pattern-library-item-bars">${Math.ceil(pattern.durationTicks / TICKS_PER_BAR)}bar</div>
+            `;
+
+            item.addEventListener('dragstart', (e) => {
+                e.dataTransfer.setData('patternId', pattern.id);
+                item.classList.add('dragging');
+            });
+            item.addEventListener('dragend', () => {
+                item.classList.remove('dragging');
+            });
+            item.addEventListener('dblclick', () => {
+                this.enterPatternEditMode(pattern.id);
+            });
+
+            this.patternLibraryList.appendChild(item);
+        });
+    }
+
+    showCreatePatternDialog() {
+        if (this.selectedNotes.size === 0) {
+            alert('请先选择要创建为Pattern的音符');
+            return;
+        }
+        const activeTrack = this.getActiveTrack();
+        if (!activeTrack) return;
+
+        const selectedNotesList = Array.from(this.selectedNotes)
+            .map(id => this.findNoteById(id))
+            .filter(n => n);
+        if (selectedNotesList.length === 0) return;
+
+        const minTick = Math.min(...selectedNotesList.map(n => n.startTick));
+        const maxEnd = Math.max(...selectedNotesList.map(n => n.startTick + n.durationTicks));
+        const suggestedBars = Math.max(1, Math.ceil((maxEnd - minTick) / TICKS_PER_BAR));
+
+        document.getElementById('patternName').value = `Pattern ${this.patternCounter + 1}`;
+        document.getElementById('patternBars').value = Math.min(8, suggestedBars);
+        document.getElementById('createPatternDialog').classList.add('show');
+        this.dialogOpen = true;
+        this._pendingCreatePatternStartTick = minTick;
+    }
+
+    hideCreatePatternDialog() {
+        document.getElementById('createPatternDialog').classList.remove('show');
+        this.dialogOpen = false;
+    }
+
+    confirmCreatePattern() {
+        const name = document.getElementById('patternName').value.trim() || `Pattern ${this.patternCounter + 1}`;
+        const bars = Math.max(1, Math.min(8, parseInt(document.getElementById('patternBars').value) || 4));
+        const durationTicks = bars * TICKS_PER_BAR;
+        const activeTrack = this.getActiveTrack();
+        if (!activeTrack) return;
+
+        this.createPatternFromSelection(name, durationTicks, activeTrack.id);
+        this.hideCreatePatternDialog();
+    }
+
+    createPatternFromSelection(name, durationTicks, trackId) {
+        if (this.selectedNotes.size === 0) return;
+
+        const selectedNotesList = Array.from(this.selectedNotes)
+            .map(id => this.findNoteById(id))
+            .filter(n => n && n.track === trackId);
+        if (selectedNotesList.length === 0) return;
+
+        const minTick = Math.min(...selectedNotesList.map(n => n.startTick));
+
+        const patternNotes = selectedNotesList.map(note => ({
+            id: generateId(),
+            pitch: note.pitch,
+            startTick: note.startTick - minTick,
+            durationTicks: note.durationTicks,
+            velocity: note.velocity
+        }));
+
+        this.patternCounter++;
+        const pattern = {
+            id: generateId(),
+            name: name || `Pattern ${this.patternCounter}`,
+            trackId: trackId,
+            durationTicks: durationTicks,
+            notes: patternNotes
+        };
+        this.patterns.set(pattern.id, pattern);
+
+        const track = this.tracks.find(t => t.id === trackId);
+        selectedNotesList.forEach(note => {
+            const idx = track.notes.findIndex(n => n.id === note.id);
+            if (idx !== -1) track.notes.splice(idx, 1);
+        });
+
+        this.addPatternToArrangement(pattern.id, trackId, minTick, 1, 0);
+
+        this.selectedNotes.clear();
+        this.render();
+        this.renderArrangement();
+        this.renderPatternLibrary();
+    }
+
+    addPatternToArrangement(patternId, trackId, startTick, loopCount, gapTicks) {
+        const item = {
+            id: generateId(),
+            patternId: patternId,
+            trackId: trackId,
+            startTick: startTick,
+            loopCount: loopCount || 1,
+            gapTicks: gapTicks || 0
+        };
+        this.arrangement.push(item);
+        this.selectedArrangementItemId = item.id;
+        return item;
+    }
+
+    enterPatternEditMode(patternId) {
+        const pattern = this.patterns.get(patternId);
+        if (!pattern) return;
+
+        this.editingPatternId = patternId;
+        this.activeTrackId = pattern.trackId;
+
+        document.getElementById('patternEditName').textContent = pattern.name;
+        document.getElementById('patternEditModeIndicator').classList.add('show');
+
+        this.renderTrackList();
+        this.resizeCanvas();
+        this.render();
+        this.renderArrangement();
+    }
+
+    exitPatternEditMode() {
+        this.editingPatternId = null;
+        this.selectedNotes.clear();
+        document.getElementById('patternEditModeIndicator').classList.remove('show');
+
+        this.resizeCanvas();
+        this.render();
+        this.renderArrangement();
+        this.renderPatternLibrary();
+    }
+
+    showLinearizeDialog() {
+        if (this.arrangement.length === 0) {
+            alert('当前没有编排内容可线性化');
+            return;
+        }
+        document.getElementById('linearizeDialog').classList.add('show');
+        this.dialogOpen = true;
+    }
+
+    hideLinearizeDialog() {
+        document.getElementById('linearizeDialog').classList.remove('show');
+        this.dialogOpen = false;
+    }
+
+    linearizeArrangement() {
+        if (this.arrangement.length === 0) return;
+
+        this.tracks.forEach(track => {
+            track.notes = [];
+        });
+
+        this.arrangement.forEach(item => {
+            const pattern = this.patterns.get(item.patternId);
+            if (!pattern) return;
+            const track = this.tracks.find(t => t.id === pattern.trackId);
+            if (!track) return;
+
+            for (let loop = 0; loop < item.loopCount; loop++) {
+                const offset = item.startTick + loop * pattern.durationTicks;
+                pattern.notes.forEach(note => {
+                    track.notes.push({
+                        id: generateId(),
+                        track: track.id,
+                        pitch: note.pitch,
+                        startTick: offset + note.startTick,
+                        durationTicks: note.durationTicks,
+                        velocity: note.velocity
+                    });
+                });
+            }
+        });
+
+        this.arrangement = [];
+        this.patterns.clear();
+        this.patternCounter = 0;
+        this.selectedArrangementItemId = null;
+        this.editingPatternId = null;
+        document.getElementById('patternEditModeIndicator').classList.remove('show');
+
+        this.renderTrackList();
+        this.render();
+        this.renderArrangement();
+        this.renderPatternLibrary();
+    }
+
+    onArrangementMouseDown(e) {
+        const pos = this.getArrangementMousePosition(e);
+        const item = this.findArrangementItemAt(pos.x, pos.y);
+
+        if (e.button === 2) return;
+
+        if (item) {
+            this.selectedArrangementItemId = item.id;
+            const pattern = this.patterns.get(item.patternId);
+            this.arrangementDragState = {
+                type: 'move',
+                itemId: item.id,
+                startX: pos.x,
+                startTick: item.startTick,
+                startTrackIdx: this.tracks.findIndex(t => t.id === pattern.trackId)
+            };
+        } else {
+            this.selectedArrangementItemId = null;
+            this.arrangementDragState = null;
+        }
+        this.renderArrangement();
+    }
+
+    onArrangementMouseMove(e) {
+        if (!this.arrangementDragState) {
+            if (e.dataTransfer && e.dataTransfer.types.includes('patternId')) {
+                e.preventDefault();
+                const pos = this.getArrangementMousePosition(e);
+                const trackIdx = Math.floor(pos.y / this.arrangementRowHeight);
+                if (trackIdx >= 0 && trackIdx < this.tracks.length) {
+                    const patternId = e.dataTransfer.getData('patternId') || this._draggingPatternId;
+                    if (!patternId) return;
+                    let startTick = Math.floor(pos.x / this.cellWidth / TICKS_PER_BAR) * TICKS_PER_BAR;
+                    startTick = Math.max(0, startTick);
+                    this.arrangementDragState = {
+                        type: 'dropPreview',
+                        patternId: patternId,
+                        trackId: this.tracks[trackIdx].id,
+                        startTick: startTick
+                    };
+                    this.renderArrangement();
+                }
+            }
+            return;
+        }
+
+        e.preventDefault();
+        const pos = this.getArrangementMousePosition(e);
+
+        if (this.arrangementDragState.type === 'move') {
+            const item = this.arrangement.find(i => i.id === this.arrangementDragState.itemId);
+            if (!item) return;
+
+            const deltaX = pos.x - this.arrangementDragState.startX;
+            const deltaTicks = Math.round(deltaX / this.cellWidth);
+            let newStartTick = this.arrangementDragState.startTick + deltaTicks;
+            newStartTick = Math.max(0, newStartTick);
+            if (this.snapEnabled) {
+                newStartTick = Math.round(newStartTick / TICKS_PER_BAR) * TICKS_PER_BAR;
+            }
+            item.startTick = newStartTick;
+
+            const trackIdx = Math.min(this.tracks.length - 1, Math.max(0, Math.floor(pos.y / this.arrangementRowHeight)));
+            const pattern = this.patterns.get(item.patternId);
+            if (pattern && this.tracks[trackIdx]) {
+                pattern.trackId = this.tracks[trackIdx].id;
+                item.trackId = this.tracks[trackIdx].id;
+            }
+
+            this.renderArrangement();
+        }
+    }
+
+    onArrangementMouseUp(e) {
+        if (this.arrangementDragState && this.arrangementDragState.type === 'dropPreview') {
+            const preview = this.arrangementDragState;
+            this.addPatternToArrangement(preview.patternId, preview.trackId, preview.startTick, 1, 0);
+            this.resizeArrangementCanvas();
+        }
+        this.arrangementDragState = null;
+        this.renderArrangement();
+    }
+
+    onArrangementDoubleClick(e) {
+        const pos = this.getArrangementMousePosition(e);
+        const item = this.findArrangementItemAt(pos.x, pos.y);
+        if (item) {
+            this.enterPatternEditMode(item.patternId);
+        }
+    }
+
+    onArrangementContextMenu(e) {
+        e.preventDefault();
+        const pos = this.getArrangementMousePosition(e);
+        const item = this.findArrangementItemAt(pos.x, pos.y);
+        if (item) {
+            this.selectedArrangementItemId = item.id;
+            this.contextMenuPatternItem = item;
+            this.showPatternContextMenu(e.clientX, e.clientY);
+            this.renderArrangement();
+        }
+    }
+
+    showPatternContextMenu(x, y) {
+        const menu = document.getElementById('patternContextMenu');
+        menu.style.left = `${x}px`;
+        menu.style.top = `${y}px`;
+        menu.style.display = 'block';
+    }
+
+    hidePatternContextMenu() {
+        document.getElementById('patternContextMenu').style.display = 'none';
+    }
+
+    handlePatternContextMenuAction(action) {
+        this.hidePatternContextMenu();
+        const item = this.contextMenuPatternItem;
+        if (!item) return;
+
+        switch (action) {
+            case 'edit':
+                this.enterPatternEditMode(item.patternId);
+                break;
+            case 'loopCount':
+                this.showPatternLoopDialog(item);
+                break;
+            case 'gapBeats':
+                this.showPatternGapDialog(item);
+                break;
+            case 'duplicate':
+                this.duplicateArrangementItem(item);
+                break;
+            case 'remove':
+                this.removeArrangementItem(item.id);
+                break;
+            case 'delete':
+                this.deletePattern(item.patternId);
+                break;
+        }
+        this.contextMenuPatternItem = null;
+    }
+
+    duplicateArrangementItem(item) {
+        const pattern = this.patterns.get(item.patternId);
+        if (!pattern) return;
+        const newStart = item.startTick + pattern.durationTicks * item.loopCount + item.gapTicks;
+        this.addPatternToArrangement(item.patternId, item.trackId, newStart, item.loopCount, item.gapTicks);
+        this.resizeArrangementCanvas();
+        this.renderArrangement();
+    }
+
+    removeArrangementItem(itemId) {
+        const idx = this.arrangement.findIndex(i => i.id === itemId);
+        if (idx !== -1) {
+            this.arrangement.splice(idx, 1);
+            if (this.selectedArrangementItemId === itemId) {
+                this.selectedArrangementItemId = null;
+            }
+            this.resizeArrangementCanvas();
+            this.renderArrangement();
+        }
+    }
+
+    deletePattern(patternId) {
+        if (!confirm('删除该Pattern将同时移除所有编排中的引用，确定继续？')) return;
+        this.patterns.delete(patternId);
+        this.arrangement = this.arrangement.filter(i => i.patternId !== patternId);
+        if (this.editingPatternId === patternId) {
+            this.exitPatternEditMode();
+        }
+        this.selectedArrangementItemId = null;
+        this.resizeArrangementCanvas();
+        this.renderArrangement();
+        this.renderPatternLibrary();
+    }
+
+    finishArrangementDrag() {
+        this.arrangementDragState = null;
+    }
+
+    onArrangementRulerClick(e) {
+        const rect = this.arrangementRulerCanvas.getBoundingClientRect();
+        const x = e.clientX - rect.left + this.arrangementGrid.scrollLeft;
+        const tick = Math.max(0, Math.floor(x / this.cellWidth));
+        this.playTick = tick;
+        if (!this.isPlaying) {
+            this.render();
+            this.renderArrangement();
+        }
+    }
+
+    showPatternLoopDialog(item) {
+        this._pendingPatternLoopItem = item;
+        document.getElementById('patternLoopCount').value = item.loopCount;
+        document.getElementById('patternLoopDialog').classList.add('show');
+        this.dialogOpen = true;
+    }
+
+    hidePatternLoopDialog() {
+        document.getElementById('patternLoopDialog').classList.remove('show');
+        this.dialogOpen = false;
+        this._pendingPatternLoopItem = null;
+    }
+
+    confirmPatternLoopCount() {
+        const item = this._pendingPatternLoopItem;
+        if (!item) return;
+        const count = Math.max(1, Math.min(16, parseInt(document.getElementById('patternLoopCount').value) || 1));
+        item.loopCount = count;
+        this.hidePatternLoopDialog();
+        this.resizeArrangementCanvas();
+        this.renderArrangement();
+    }
+
+    showPatternGapDialog(item) {
+        this._pendingPatternGapItem = item;
+        document.getElementById('patternGapBeats').value = Math.round(item.gapTicks / TICKS_PER_BEAT);
+        document.getElementById('patternGapDialog').classList.add('show');
+        this.dialogOpen = true;
+    }
+
+    hidePatternGapDialog() {
+        document.getElementById('patternGapDialog').classList.remove('show');
+        this.dialogOpen = false;
+        this._pendingPatternGapItem = null;
+    }
+
+    confirmPatternGapBeats() {
+        const item = this._pendingPatternGapItem;
+        if (!item) return;
+        const beats = Math.max(0, Math.min(4, parseInt(document.getElementById('patternGapBeats').value) || 0));
+        item.gapTicks = beats * TICKS_PER_BEAT;
+        this.hidePatternGapDialog();
+        this.resizeArrangementCanvas();
+        this.renderArrangement();
+    }
+
+    getArrangementMousePosition(e) {
+        const rect = this.arrangementGridCanvas.getBoundingClientRect();
+        return {
+            x: e.clientX - rect.left + this.arrangementGrid.scrollLeft,
+            y: e.clientY - rect.top + this.arrangementGrid.scrollTop
+        };
+    }
+
+    findArrangementItemAt(x, y) {
+        const trackIdx = Math.floor(y / this.arrangementRowHeight);
+        if (trackIdx < 0 || trackIdx >= this.tracks.length) return null;
+
+        for (let i = this.arrangement.length - 1; i >= 0; i--) {
+            const item = this.arrangement[i];
+            const pattern = this.patterns.get(item.patternId);
+            if (!pattern) continue;
+            const itemTrackIdx = this.tracks.findIndex(t => t.id === pattern.trackId);
+            if (itemTrackIdx !== trackIdx) continue;
+
+            const itemStart = item.startTick * this.cellWidth;
+            const itemWidth = (pattern.durationTicks * item.loopCount + item.gapTicks) * this.cellWidth;
+            if (x >= itemStart && x < itemStart + itemWidth) {
+                return item;
+            }
+        }
+        return null;
     }
 }
 

@@ -74,6 +74,43 @@
             </div>
         </div>
 
+        <div class="arrangement-panel" id="arrangementPanel">
+            <div class="arrangement-toolbar">
+                <button id="arrangementToggleBtn" class="automation-toggle-btn" title="Toggle Arrangement View">
+                    <span class="btn-arrow">▾</span> 编排视图 (Arrangement)
+                </button>
+                <div class="arrangement-controls">
+                    <button id="linearizeBtn" class="toolbar-btn danger" title="将编排展开为普通音符序列（不可逆）">线性化</button>
+                    <div class="pattern-length-control">
+                        <label for="patternLengthSelect">默认Pattern长度:</label>
+                        <select id="patternLengthSelect" class="quantize-select">
+                            <option value="4">1 小节</option>
+                            <option value="8">2 小节</option>
+                            <option value="16" selected>4 小节</option>
+                            <option value="32">8 小节</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+            <div class="arrangement-content" id="arrangementContent">
+                <div class="arrangement-track-labels" id="arrangementTrackLabels"></div>
+                <div class="arrangement-grid-container" id="arrangementGridContainer">
+                    <div class="arrangement-ruler" id="arrangementRuler">
+                        <canvas id="arrangementRulerCanvas"></canvas>
+                    </div>
+                    <div class="arrangement-grid" id="arrangementGrid">
+                        <canvas id="arrangementGridCanvas"></canvas>
+                    </div>
+                </div>
+                <div class="pattern-library" id="patternLibrary">
+                    <div class="pattern-library-header">
+                        <span>Patterns</span>
+                    </div>
+                    <div class="pattern-library-list" id="patternLibraryList"></div>
+                </div>
+            </div>
+        </div>
+
         <div class="main-content">
             <div class="piano-roll-container">
                 <div class="top-spacer"></div>
@@ -147,7 +184,84 @@
         <div class="menu-item" data-action="velocity">Set Velocity...</div>
         <div class="menu-item" data-action="copy">Copy</div>
         <div class="menu-item" data-action="paste">Paste</div>
+        <div class="menu-item" data-action="createPattern">创建 Pattern...</div>
         <div class="menu-item" data-action="delete">Delete</div>
+    </div>
+
+    <div id="patternContextMenu" class="context-menu">
+        <div class="menu-item" data-pattern-action="edit">编辑 Pattern</div>
+        <div class="menu-item" data-pattern-action="loopCount">设置循环次数...</div>
+        <div class="menu-item" data-pattern-action="gapBeats">设置过渡空拍...</div>
+        <div class="menu-item" data-pattern-action="duplicate">复制 Pattern</div>
+        <div class="menu-item" data-pattern-action="remove">从编排移除</div>
+        <div class="menu-item" data-pattern-action="delete">删除 Pattern（所有引用）</div>
+    </div>
+
+    <div id="createPatternDialog" class="dialog">
+        <div class="dialog-content">
+            <h3>创建 Pattern</h3>
+            <div class="range-inputs">
+                <div class="range-input">
+                    <label for="patternName">名称:</label>
+                    <input type="text" id="patternName" value="Pattern">
+                </div>
+            </div>
+            <div class="range-inputs">
+                <div class="range-input">
+                    <label for="patternBars">长度(小节):</label>
+                    <input type="number" id="patternBars" min="1" max="8" value="4">
+                </div>
+            </div>
+            <p class="dialog-hint">选区内容将被提取为Pattern，原位置变为对该Pattern的引用</p>
+            <div class="dialog-buttons">
+                <button id="createPatternCancel">取消</button>
+                <button id="createPatternOk">创建</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="patternLoopDialog" class="dialog">
+        <div class="dialog-content">
+            <h3>设置循环次数</h3>
+            <div class="range-inputs">
+                <div class="range-input">
+                    <label for="patternLoopCount">循环次数:</label>
+                    <input type="number" id="patternLoopCount" min="1" max="16" value="1">
+                </div>
+            </div>
+            <div class="dialog-buttons">
+                <button id="patternLoopCancel">取消</button>
+                <button id="patternLoopOk">确定</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="patternGapDialog" class="dialog">
+        <div class="dialog-content">
+            <h3>设置过渡空拍</h3>
+            <div class="range-inputs">
+                <div class="range-input">
+                    <label for="patternGapBeats">静默拍数:</label>
+                    <input type="number" id="patternGapBeats" min="0" max="4" value="0">
+                </div>
+            </div>
+            <p class="dialog-hint">Pattern播放完毕后添加的静默间隔</p>
+            <div class="dialog-buttons">
+                <button id="patternGapCancel">取消</button>
+                <button id="patternGapOk">确定</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="linearizeDialog" class="dialog">
+        <div class="dialog-content">
+            <h3>线性化编排</h3>
+            <p class="dialog-hint">这将把当前编排展开为普通音符序列写回各轨道。<br><strong>此操作不可逆！</strong>所有Pattern引用将被替换为实际音符，编排将被清空。</p>
+            <div class="dialog-buttons">
+                <button id="linearizeCancel">取消</button>
+                <button id="linearizeOk" class="danger-btn">确认线性化</button>
+            </div>
+        </div>
     </div>
 
     <div id="interpolationMenu" class="context-menu">
@@ -263,6 +377,11 @@
     </div>
 
     <input type="file" id="midiFileInput" accept=".mid,.midi" style="display:none">
+
+    <div id="patternEditModeIndicator" class="pattern-edit-mode-indicator">
+        正在编辑 Pattern: <span class="pattern-edit-name" id="patternEditName"></span>
+        <span class="esc-hint">按 Esc 返回全局视图</span>
+    </div>
 
     <script src="app.js"></script>
 </body>

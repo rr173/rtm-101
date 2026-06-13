@@ -1654,9 +1654,6 @@ class PianoRollEditor {
             if (aboveStaff || belowStaff) {
                 let ledgerLineY = noteY;
                 while (ledgerLineY < staffTop - lineSpacing / 2 || ledgerLineY > staffBottom + lineSpacing / 2) {
-                    if (ledgerLineY < staffTop) {
-                        const stepsAbove = Math.floor((staffTop - ledgerLineY) / (lineSpacing / 2);
-                    }
                     ledgerLineY += lineSpacing / 2;
                 }
             }
